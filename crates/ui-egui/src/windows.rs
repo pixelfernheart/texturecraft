@@ -25,6 +25,8 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     settings(app, ctx);
     crate::keymap::window(app, ctx);
     crate::windows::export(app, ctx);
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::mesh_export_dialog::show(app, ctx);
     #[cfg(target_arch = "wasm32")]
     export_mesh(app, ctx);
     unsaved(app, ctx);
@@ -706,6 +708,7 @@ fn settings(app: &mut TextureCraftApp, ctx: &egui::Context) {
 #[cfg(target_arch = "wasm32")]
 fn export_mesh(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let formats = [
+        ("gltf", "glTF JSON (.gltf)", tr("Textures embedded; for game engines and most viewers")),
         ("glb", "glTF binary (.glb)", tr("Textures embedded; for game engines and most viewers")),
         ("usdz", "USDZ (.usdz)", tr("Textures packaged; for USD tools and AR Quick Look")),
         ("obj", "Wavefront OBJ (.obj)", tr("Geometry and UVs only")),
@@ -889,22 +892,7 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             true
         }
         "file.exportMesh" => {
-            let name = format!("{}.obj", texturecraft_engine::formats::export::sanitize_file_stem(&app.session.doc.project.name));
-            let dialog = FileDialog::save()
-                .filter(tr("Wavefront OBJ with MTL, textures alongside"), &["obj"])
-                .filter(tr("glTF binary with textures"), &["glb"])
-                .filter(tr("USDZ with textures"), &["usdz"])
-                .filter(tr("USD text, textures alongside"), &["usda"])
-                .filter(tr("USD binary, textures alongside"), &["usdc"])
-                .file_name(name);
-            app.ask_file(dialog, Bound::Project, |app, paths| {
-                if let Some(p) = paths.first()
-                    && let Some(r) = app.run("file.exportMesh", json!({"path": p.display().to_string()}))
-                {
-                    let p = r.get("path").and_then(|p| p.as_str()).unwrap_or_default().to_string();
-                    app.toast(trf("Exported mesh to {path}", &[("path", &p)]), false);
-                }
-            });
+            crate::mesh_export_dialog::open(app);
             true
         }
         "file.reimportMesh" => {

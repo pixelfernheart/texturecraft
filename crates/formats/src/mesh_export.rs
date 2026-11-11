@@ -8,6 +8,7 @@ mod usdc;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use base64::Engine as _;
 use serde_json::{Map, Value, json};
 use texturecraft_core::{Channel, NormalFormat};
 use texturecraft_geom::glam::Vec3;
@@ -301,10 +302,37 @@ impl GlbBuilder {
     }
 }
 
+/// The mesh as self-contained glTF JSON named `name`, with `textures[i]` on material `i`
+/// (materials without an entry get a plain one). Vertex data is written as is: the mesh already
+/// follows glTF's conventions.
+pub fn gltf_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Vec<u8>> {
+    let (mut doc, bin) = gltf_parts(mesh, name, textures)?;
+    doc["buffers"][0]["uri"] = Value::String(format!("data:application/octet-stream;base64,{}", base64::engine::general_purpose::STANDARD.encode(bin)));
+    serde_json::to_vec(&doc).map_err(|e| FormatError::Invalid(format!("glTF JSON: {e}")))
+}
+
 /// The mesh as binary glTF (GLB) named `name`, with `textures[i]` on material `i` (materials
 /// without an entry get a plain one). Vertex data is written as is: the mesh already follows
 /// glTF's conventions.
 pub fn glb_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Vec<u8>> {
+    let (doc, mut bin) = gltf_parts(mesh, name, textures)?;
+    let mut js = serde_json::to_vec(&doc).map_err(|e| FormatError::Invalid(format!("glTF JSON: {e}")))?;
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let total = 12 + 8 + js.len() + 8 + bin.len();
+    let len32 = |v: usize| u32::try_from(v).map(u32::to_le_bytes).map_err(|_| FormatError::TooLarge(format!("the GLB would be {total} bytes (limit 4 GiB)")));
+    let mut out = Vec::with_capacity(total);
+    for chunk in [&b"glTF"[..], &2u32.to_le_bytes(), &len32(total)?, &len32(js.len())?, b"JSON", &js, &len32(bin.len())?, b"BIN\0", &bin] {
+        out.extend_from_slice(chunk);
+    }
+    Ok(out)
+}
+
+fn gltf_parts(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<(Value, Vec<u8>)> {
     let n = mesh.positions.len();
     if n == 0 || mesh.indices.len() < 3 {
         return Err(FormatError::Invalid("the mesh is empty".into()));
@@ -363,21 +391,7 @@ pub fn glb_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Ve
             doc[key] = list.into();
         }
     }
-    let mut js = serde_json::to_vec(&doc).map_err(|e| FormatError::Invalid(format!("glTF JSON: {e}")))?;
-    while !js.len().is_multiple_of(4) {
-        js.push(b' ');
-    }
-    let mut bin = g.bin;
-    while !bin.len().is_multiple_of(4) {
-        bin.push(0);
-    }
-    let total = 12 + 8 + js.len() + 8 + bin.len();
-    let len32 = |v: usize| u32::try_from(v).map(u32::to_le_bytes).map_err(|_| FormatError::TooLarge(format!("the GLB would be {total} bytes (limit 4 GiB)")));
-    let mut out = Vec::with_capacity(total);
-    for chunk in [&b"glTF"[..], &2u32.to_le_bytes(), &len32(total)?, &len32(js.len())?, b"JSON", &js, &len32(bin.len())?, b"BIN\0", &bin] {
-        out.extend_from_slice(chunk);
-    }
-    Ok(out)
+    Ok((doc, g.bin))
 }
 
 /// OBJ names end at whitespace.

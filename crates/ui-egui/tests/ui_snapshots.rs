@@ -111,6 +111,10 @@ fn window_snapshots() {
     harness.state_mut().ui.windows.settings = true;
     save(&mut harness, &output_dir, "window-settings");
     harness.state_mut().ui.windows.settings = false;
+    let ctx = harness.ctx.clone();
+    texturecraft_ui_egui::menus::invoke(harness.state_mut(), &ctx, "file.exportMesh");
+    save(&mut harness, &output_dir, "window-export-mesh-save");
+    harness.state_mut().ui.windows.mesh_export_dialog = None;
 
     // A taller window exposes every mesh-map slot
     harness.state_mut().ui.dock.focus(Panel::TextureSetSettings);

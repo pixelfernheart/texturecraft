@@ -31,6 +31,8 @@ mod levels_properties;
 mod mask_preview_image;
 mod material_preview_image;
 pub mod menus;
+#[cfg(not(target_arch = "wasm32"))]
+mod mesh_export_dialog;
 pub mod new_project_advanced;
 mod orb_shape;
 pub mod parity;

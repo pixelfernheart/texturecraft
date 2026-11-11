@@ -91,6 +91,72 @@ fn choosing_the_same_menu_item_twice_asks_once() {
 }
 
 #[test]
+fn mesh_export_dialog_saves_in_the_selected_format() {
+    let file = temp_file("mesh-export", "checkout.gltf");
+    let mut h = harness(false);
+    let name = texturecraft_engine::formats::export::sanitize_file_stem(&h.state().session.doc.project.name);
+    invoke(&mut h, "file.exportMesh");
+    h.run_steps(3);
+
+    let dialog = h.state_mut().ui.windows.mesh_export_dialog.as_mut().expect("integrated mesh export dialog opens");
+    assert_eq!(dialog.file_name, format!("{name}.obj"));
+    dialog.directory = file.parent().unwrap().to_path_buf();
+    dialog.format = "gltf".into();
+    dialog.file_name = "checkout.gltf".into();
+
+    h.get_by_role_and_label(egui::Role::Button, "Save").click();
+    h.run_steps(3);
+    assert!(h.state().ui.windows.mesh_export_dialog.is_none(), "Save should close the export dialog");
+    assert!(file.is_file());
+    assert!(std::fs::read(&file).unwrap().starts_with(b"{"));
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn mesh_export_dialog_confirms_before_replacing_an_existing_file() {
+    let file = temp_file("mesh-export-overwrite", "checkout.gltf");
+    std::fs::write(&file, b"existing file").unwrap();
+    let mut h = harness(false);
+    invoke(&mut h, "file.exportMesh");
+    h.run_steps(3);
+
+    let dialog = h.state_mut().ui.windows.mesh_export_dialog.as_mut().expect("integrated mesh export dialog opens");
+    dialog.directory = file.parent().unwrap().to_path_buf();
+    dialog.file_name = "checkout.gltf".into();
+    dialog.format = "gltf".into();
+
+    h.get_by_role_and_label(egui::Role::Button, "Save").click();
+    h.run_steps(2);
+    assert_eq!(std::fs::read(&file).unwrap(), b"existing file");
+    assert!(h.state().ui.windows.mesh_export_dialog.as_ref().unwrap().overwrite_confirmation);
+
+    h.get_by_role_and_label(egui::Role::Button, "Replace").click();
+    h.run_steps(3);
+    assert!(h.state().ui.windows.mesh_export_dialog.is_none());
+    assert!(std::fs::read(&file).unwrap().starts_with(b"{"));
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn mesh_export_dialog_is_discarded_when_the_project_changes() {
+    let file = temp_file("mesh-export-project-changed", "checkout.glb");
+    let mut h = harness(false);
+    invoke(&mut h, "file.exportMesh");
+    h.run_steps(3);
+
+    let dialog = h.state_mut().ui.windows.mesh_export_dialog.as_mut().expect("integrated mesh export dialog opens");
+    dialog.directory = file.parent().unwrap().to_path_buf();
+    dialog.file_name = "checkout.glb".into();
+    dialog.format = "glb".into();
+    h.state_mut().session.project_id += 1;
+    h.run_steps(2);
+
+    assert!(!file.exists());
+    assert!(h.state().ui.windows.mesh_export_dialog.is_none());
+    assert!(h.state().toasts.iter().any(|toast| toast.error && toast.text.starts_with(PROJECT_CHANGED)));
+}
+
+#[test]
 fn save_as_and_save_a_copy_are_separate_requests() {
     let mut h = harness(false);
     answer(&mut h, |_| Answer::Cancelled);
@@ -146,7 +212,7 @@ fn answered_after_the_project_changed(ask: impl FnOnce(&mut Harness<'_, TextureC
 #[test]
 fn every_project_dialog_does_nothing_for_a_replaced_project() {
     let file = temp_file("replaced-actions", "chosen.obj");
-    for id in ["material.load", "resource.import", "file.importMaterialX", "file.exportMesh", "file.reimportMesh"] {
+    for id in ["material.load", "resource.import", "file.importMaterialX", "file.reimportMesh"] {
         let h = answered_after_the_project_changed(|h| invoke(h, id), &file);
         assert!(h.state().toasts.iter().any(|t| t.error && t.text.starts_with(PROJECT_CHANGED)), "{id}");
         assert!(!file.exists(), "{id} wrote nothing");

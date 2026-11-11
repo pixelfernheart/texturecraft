@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use texturecraft_engine::core::{BakedMap, Channel, NormalFormat};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+
 use crate::docking::Dock;
 use crate::keymap::Keymap;
 
@@ -73,12 +76,45 @@ pub struct Windows {
     /// Browser File › Export Mesh: the download format choice.
     #[serde(default)]
     pub export_mesh: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    pub mesh_export_dialog: Option<MeshExportDialog>,
     /// The start window: new, open, recent projects (the app opens it at launch).
     #[serde(skip)]
     pub start: bool,
     /// What waits on the unsaved-changes dialog: save, don't save or cancel.
     #[serde(skip)]
     pub unsaved: Option<Unsaved>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct MeshExportDialog {
+    pub project_id: u64,
+    pub directory: PathBuf,
+    pub location_text: String,
+    pub file_name: String,
+    pub format: String,
+    pub entries: Vec<MeshExportEntry>,
+    pub places: Vec<MeshExportPlace>,
+    pub volumes: Vec<MeshExportPlace>,
+    pub selected_entry: Option<PathBuf>,
+    pub error: Option<String>,
+    pub overwrite_confirmation: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshExportPlace {
+    pub label: String,
+    pub path: PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshExportEntry {
+    pub path: PathBuf,
+    pub is_directory: bool,
 }
 
 /// An action that replaces or ends the project, held while the project has unsaved changes.

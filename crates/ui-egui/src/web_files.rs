@@ -285,11 +285,12 @@ mod web {
         }
     }
 
-    /// File › Export Mesh: download the working mesh as `ext`: `glb` or `usdz` with its
+    /// File › Export Mesh: download the working mesh as `ext`: `gltf`, `glb` or `usdz` with its
     /// textures inside, else OBJ.
     pub fn export_mesh(app: &mut TextureCraftApp, ext: &str) {
         let name = format!("{}.{ext}", sanitize_file_stem(&app.session.doc.project.name));
         let bytes = match ext {
+            "gltf" => app.session.mesh_gltf_bytes(),
             "glb" => app.session.mesh_glb_bytes(),
             "usdz" => app.session.mesh_usd(texturecraft_engine::formats::UsdFormat::Usdz).map(|u| u.bytes),
             _ => Ok(app.session.mesh_obj_bytes()),

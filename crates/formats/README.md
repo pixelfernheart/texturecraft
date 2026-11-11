@@ -44,6 +44,7 @@ degenerate are refused (MikkTSpace crashes on them).
 
 ```rust
 pub fn obj_bytes(mesh: &Mesh, name: &str) -> Vec<u8>;
+pub fn gltf_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Vec<u8>>;
 pub fn glb_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Vec<u8>>;
 pub fn glb_export_options() -> ExportOptions;                     // render GlbTextures with these
 pub struct GlbTextures { pub base_color, pub orm, pub normal, pub emissive: Option<Vec<u8>> }  // PNG
@@ -62,9 +63,10 @@ emissive maps dropped, and both clear coat maps when the coat is black). Meters,
 64-byte aligned offsets; `.usda` / `.usdc` reference `<name>_<material>_<slot>.png` next to the
 layer.
 
-GLB: one primitive per submesh, one metallic-roughness material per mesh material with its
-textures embedded in the binary chunk (base color sRGB, `alphaMode: BLEND` when it has alpha;
-ORM as occlusion + metallic-roughness; OpenGL normal; emissive only when not black).
+glTF and GLB: one primitive per submesh, one metallic-roughness material per mesh material with
+its textures embedded (as a data-URI buffer in glTF JSON, or in the binary chunk in GLB; base
+color sRGB, `alphaMode: BLEND` when it has alpha; ORM as occlusion + metallic-roughness; OpenGL
+normal; emissive only when not black).
 
 ### Texture export (`export`, `presets`)
 
