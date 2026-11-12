@@ -1,25 +1,210 @@
-This is based on recent v0.5.0.
+TextureCraft v0.5.0 — Contribution Notes and New Feature Request
 
-The error is on GLBT export error.
-When i select export filetype as glbt instead on obj, 
-1. it didn't chanhe it's file name.
-2. even though i changed manually inside, it saved as glbt.obj.
+PART 1 — EXISTING FIXES AND CONTRIBUTIONS
 
-https://ibb.co/RTvm91yr
-https://ibb.co/Kp9C7Lrn
-https://ibb.co/whknNj43
+A. GLTF/GLB EXPORT FIX
+
+This work is based on the recent TextureCraft v0.5.0 codebase.
+
+The issue affected the GLTF export option (the original report referred
+to it as “GLBT”):
+
+1.  When selecting the GLTF export file type instead of OBJ, the output
+    filename did not change correctly.
+2.  Even after manually changing the filename/extension, the file was
+    saved with an incorrect combined extension, such as .glbt.obj.
+
+The export filename and extension handling have been fixed.
+
+In addition, GLB (binary glTF) has been added as another export option.
+
+Original issue screenshots: - https://ibb.co/RTvm91yr -
+https://ibb.co/Kp9C7Lrn - https://ibb.co/whknNj43 -
 https://ibb.co/0Rv75tVZ
 
-Images are shared of error.
-
-Now i fixed it and even add glb(binary) as another export option.
-i hope i'm sharing the correct file, please download and try this then if you liek then include it.
-
-https://ibb.co/MxRz6zBQ
-https://ibb.co/SD0MjjkQ
-https://ibb.co/gbwrNxq3
+Screenshots showing the fixed behavior: - https://ibb.co/MxRz6zBQ -
+https://ibb.co/SD0MjjkQ - https://ibb.co/gbwrNxq3 -
 https://ibb.co/NnKyfZ49
 
-those are fixed Images.
+Please download and test the changes. If the implementation is suitable,
+please consider including it.
 
-Thank you. ^^
+B. LINUX APPIMAGE BUILD AND PACKAGING IMPROVEMENTS
+
+Additional work completed:
+
+-   Built the Linux x86_64 AppImage for TextureCraft 0.5.0:
+    dist/release/texturecraft-0.5.0-linux-x86_64.AppImage
+-   Generated the AppImage update metadata:
+    dist/release/texturecraft-0.5.0-linux-x86_64.AppImage.zsync
+-   Reworked .gitignore to consolidate duplicate rules and ignore
+    generated build, packaging, temporary, editor, and operating-system
+    files.
+-   Verified that the AppImage launches and reports its version.
+-   Ran the AppRun smoke test successfully.
+
+PART 2 — NEW FEATURE REQUEST
+
+TextureCraft v0.5.0 — Decal Editing and Direct Image-Painting Improvements
+
+Background
+
+This new feature request is also based on the recent TextureCraft v0.5.0
+codebase. The goal is to improve how users place, resize, transform, and
+fit images when using decals and direct image painting.
+
+Please implement the features below in the existing application.
+Preserve current workflows and behavior unless a change is necessary to
+support these improvements.
+
+A. DECAL EDITING (DRAG-AND-DROP IMAGE PLACEMENT)
+
+When a user adds a texture and drags it onto a model surface as a decal
+(for example, a logo), the current editor provides corner/vertex
+handles. These handles allow the user to resize the decal evenly, but do
+not provide independent control over each edge.
+
+Required improvements:
+
+1.  Add edge-midpoint handles
+    -   Add one draggable control point at the midpoint of each of the
+        four decal edges.
+    -   Allow each edge midpoint to be dragged independently.
+    -   Moving an edge handle should adjust that edge without requiring
+        the user to move both corner vertices manually.
+    -   Keep the existing corner/vertex handles.
+2.  Add Stretch and Lock modes
+    -   Provide clearly named Stretch and Lock options for decal
+        editing.
+    -   Stretch mode: preserve the complete image content while the user
+        moves individual vertices or edge handles. The image should
+        deform/stretch to fit the edited decal shape rather than
+        unexpectedly cropping or cutting off parts of the image.
+    -   Lock mode: retain the clipping/cropping behavior when the decal
+        boundary is reshaped, so parts of the image outside the edited
+        shape may be cut off.
+    -   Make the active mode visible to the user and ensure switching
+        modes behaves predictably.
+3.  Correct the default rotation/orientation
+    -   The rotation currently displays 0 degrees, but the decal does
+        not appear visually straight at that setting.
+    -   The user reports that approximately 0.785 degrees of rotation
+        currently makes the decal look correctly aligned at 0 degrees.
+    -   Correct the rotation offset/calculation so that a visually
+        straight decal corresponds to the displayed 0-degree setting.
+    -   Do not apply an arbitrary offset without checking the coordinate
+        system and rotation math. Verify the correction with the
+        supplied examples and make sure other rotation values remain
+        accurate.
+    -   The user also mentioned 0.075 degrees in the request; confirm
+        the intended numeric correction during implementation rather
+        than assuming that 0.075 and 0.785 are interchangeable.
+
+B. DIRECT IMAGE PAINTING (CLICK-TO-PAINT)
+
+When the user clicks a model surface with an image selected, the image
+is painted/applied directly to the surface instead of being placed as an
+editable drag-and-drop decal.
+
+Add controls that let the user adjust how the image is fitted and
+transformed for this direct-paint workflow.
+
+Required improvements:
+
+1.  Image fitting modes
+    -   Add a Fill option.
+    -   Add a Cover option.
+    -   Include other useful standard fitting modes where appropriate,
+        such as Contain/Fit and Stretch.
+    -   Define the behavior clearly:
+        -   Fill/Stretch: fill the target area by stretching the image
+            as needed.
+        -   Cover: fill the target area while preserving the image
+            aspect ratio; crop any overflow.
+        -   Contain/Fit: show the complete image while preserving its
+            aspect ratio; empty space may remain where the aspect ratios
+            differ.
+    -   Use terminology consistently in the UI and avoid confusing
+        duplicate options.
+2.  Rotation
+    -   Add a rotation control for the directly painted image.
+    -   Make the displayed angle correspond to the actual visual
+        orientation.
+    -   Ensure 0 degrees means the image is visually unrotated/straight,
+        subject to the same coordinate-system correction investigated
+        for decals.
+3.  Whole-image stretching
+    -   Provide a way to stretch or scale the complete image across the
+        target surface.
+    -   Keep the behavior distinct from the image fitting modes, so
+        users can understand whether they are changing the image
+        proportions or choosing how it fits the target.
+4.  Vertex and edge adjustment
+    -   Where supported by the direct-paint workflow, provide controls
+        to adjust the image shape using individual vertices and
+        edge-midpoint handles.
+    -   Allow edge movement independently.
+    -   Include the appropriate Stretch/Lock behavior so users can
+        choose between preserving the complete image by stretching it
+        and allowing cropping/clipping.
+5.  Consistent interaction
+    -   Make the controls and behavior understandable and consistent
+        with the decal editor wherever the same concepts apply.
+    -   Ensure the controls update the preview and final painted result
+        consistently.
+    -   Preserve undo/redo behavior and avoid breaking existing
+        painting, decal placement, or export workflows.
+
+REFERENCE IMAGES
+
+The user supplied these two reference images for the requested
+UI/behavior:
+
+1.  https://ibb.co/Hfd9dpH1
+2.  https://ibb.co/R4hJCy00
+
+IMPLEMENTATION EXPECTATIONS
+
+-   Implement these features in the existing TextureCraft v0.5.0
+    codebase rather than creating a separate tool.
+-   Reuse existing image transformation, decal, painting, and UI systems
+    where practical.
+-   Keep the UI clear and consistent with TextureCraft’s existing
+    design.
+-   Handle different image aspect ratios and target surface shapes.
+-   Check edge cases such as moving a handle beyond the original image
+    boundary, rotating non-square images, and switching between fitting
+    modes.
+-   Add or update automated tests for the geometry, fitting, rotation,
+    and transformation behavior.
+-   Verify that the preview matches the final result on the model.
+-   Build and run the application, and test both workflows:
+    1.  Drag-and-drop decal placement and editing.
+    2.  Click-to-paint direct image application.
+
+ACCEPTANCE CRITERIA
+
+The work is complete when:
+
+-   The GLTF export filename/extension issue is fixed.
+-   GLB (binary glTF) is available as an additional export option.
+-   The Linux x86_64 AppImage and its .zsync update metadata are
+    generated and tested.
+-   Decals have four independently draggable edge-midpoint handles as
+    well as corner handles.
+-   Stretch mode preserves all image content while reshaping the decal.
+-   Lock mode permits clipping/cropping when the decal shape is changed.
+-   A visually straight decal reads as 0 degrees in the rotation
+    control.
+-   Direct image painting provides useful fitting modes, including Fill,
+    Cover, and Contain/Fit.
+-   Direct image painting supports rotation and whole-image stretching.
+-   Vertex and edge adjustments are available in the direct-paint
+    workflow where technically supported.
+-   The preview and final painted/decal result agree.
+-   Existing functionality, undo/redo, and export behavior continue to
+    work.
+
+Please review the supplied reference images and the existing v0.5.0
+implementation before deciding the exact UI layout or internal
+implementation.
