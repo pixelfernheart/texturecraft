@@ -32,7 +32,6 @@
   <img alt="MCP server for agents" src="https://img.shields.io/badge/agents-MCP%20server-555555?style=flat-square">
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-555555?style=flat-square">
   <br>
-  <a href="https://sonarcloud.io/project/overview?id=storytold_texturecraft"><img alt="Scanned by SonarCloud" src="https://img.shields.io/badge/Scanned_by-SonarCloud-4b9fd5?style=flat-square&logo=sonarqubecloud&logoColor=white"></a>
   <a href="https://coderabbit.ai"><img alt="Reviewed by CodeRabbit" src="https://img.shields.io/coderabbit/prs/github/storytold/texturecraft?style=flat-square&label=Reviewed%20by%20CodeRabbit&logo=coderabbit"></a>
 </p>
 
@@ -126,7 +125,7 @@ traced on the GPU by `texturecraft-cli render`.
 - **Robust.** No panics in shipped code, every command tested with hostile input, unlimited undo
   from copy-on-write snapshots, and lossless `.tcraft` projects.
 - **Open.** glTF/GLB, FBX, COLLADA, USD, Alembic, OBJ, PLY and STL in; PNG, JPEG, TGA, TIFF, BMP,
-  WEBP, EXR and HDR textures out at 8, 16 or 32 bits, with UDIM tiles; textured OBJ, GLB and USD
+  WEBP, EXR and HDR textures out at 8, 16 or 32 bits, with UDIM tiles; textured OBJ, glTF, GLB and USD
   mesh export. Every material, environment, brush alpha and built-in mesh is procedural.
 - **Works with MaterialCraft.** Node-based materials from
   [MaterialCraft](https://github.com/storytold/materialcraft) (`.mcmat`, sent straight to the

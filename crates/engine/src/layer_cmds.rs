@@ -2,7 +2,9 @@
 //! per-channel blending and fill sources.
 
 use serde_json::{Value, json};
-use texturecraft_core::{BlendMode, Channel, ChannelBlend, EffectKind, Fill, Layer, LayerId, LayerKind, Procedural, ProceduralKind, Projection, Source};
+use texturecraft_core::{
+    BlendMode, Channel, ChannelBlend, EffectKind, Fill, ImageFit, Layer, LayerId, LayerKind, Procedural, ProceduralKind, Projection, Source,
+};
 
 use crate::commands::{
     CommandSpec, always, bad, blend_param, boolp, channel_param, color_param, content_param, f32p, has_layer, layer_param, normal_format_param, strp, u64p,
@@ -36,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set fill projection",
             [],
             None,
-            "{layer? | effect?: content fill effect id, projection?: uv|triplanar|planar|spherical|cylindrical (default: the current one), scale?: number | [u, v] (uv), rotation?: degrees (uv), offset?: [u, v] (uv) | [x, y, z] (triplanar, planar), sharpness?: 1..64 (triplanar), axis?: 0|1|2 (planar, cylindrical)} — what is not given keeps its value",
+            "{layer? | effect?: content fill effect id, projection?: uv|triplanar|planar|spherical|cylindrical (default: the current one), scale?: number | [u, v] (uv), rotation?: degrees (uv), offset?: [u, v] (uv) | [x, y, z] (triplanar, planar), fit?: stretch|contain|cover (uv image), sharpness?: 1..64 (triplanar), axis?: 0|1|2 (planar, cylindrical)} — what is not given keeps its value",
             has_layer,
             fill_projection
         ),
@@ -168,12 +170,6 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let id = layer_param(s, "layer.select", p)?;
     let (ts, _, _) = s.doc.project.locate(id).ok_or_else(|| bad("layer.select", "layer not in a stack"))?;
-
-    // Paths paint into the active set
-    if ts != s.ts() {
-        s.finish_path()?;
-    }
-
     s.active_set = ts;
     s.selected.insert(ts, id);
     s.target = match p.get("target") {
@@ -190,7 +186,6 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         },
         None => StackTarget::Content,
     };
-
     s.revision = s.revision.wrapping_add(1);
     Ok(json!({ "layer": id.0, "textureSet": ts }))
 }
@@ -399,6 +394,13 @@ fn fill_set(s: &mut Session, p: &Value) -> Result<Value> {
 /// The projection `p` asks for. Fields it does not give keep their values from `current` when
 /// that is of the same kind (or `p` names no kind), and the kind's defaults otherwise.
 pub(crate) fn projection_from(p: &Value, cmd: &str, current: Option<&Projection>) -> Result<Projection> {
+    let fit = match strp(p, "fit") {
+        None => None,
+        Some("stretch") => Some(ImageFit::Stretch),
+        Some("contain" | "fit") => Some(ImageFit::Contain),
+        Some("cover") => Some(ImageFit::Cover),
+        Some(other) => return Err(bad(cmd, format!("unknown image fit `{other}`"))),
+    };
     let named = match strp(p, "projection") {
         None => None,
         Some("uv") => Some(Projection::default()),
@@ -416,10 +418,11 @@ pub(crate) fn projection_from(p: &Value, cmd: &str, current: Option<&Projection>
     let scale = floats::<2>(p, "scale", 0.001, 1000.0);
     let axis = u64p(p, "axis").map(|a| a.min(2) as u8);
     match &mut proj {
-        Projection::Uv { scale: s, rotation, offset } => {
+        Projection::Uv { scale: s, rotation, offset, fit: current_fit } => {
             *s = scale.unwrap_or(*s);
             *rotation = f32p(p, "rotation").map_or(*rotation, |r| r.rem_euclid(360.0));
             *offset = floats(p, "offset", -1000.0, 1000.0).unwrap_or(*offset);
+            *current_fit = fit.unwrap_or(*current_fit);
         }
         Projection::Triplanar { scale: s, sharpness, offset } => {
             *s = scale.map_or(*s, |v| v[0]);
@@ -436,7 +439,11 @@ pub(crate) fn projection_from(p: &Value, cmd: &str, current: Option<&Projection>
             *s = scale.map_or(*s, |v| v[0]);
             *a = axis.unwrap_or(*a);
         }
+        Projection::Decal(_) if fit.is_some() => return Err(bad(cmd, "`fit` is only available for UV image projections")),
         Projection::Decal(_) => {}
+    }
+    if fit.is_some() && !matches!(proj, Projection::Uv { .. }) {
+        return Err(bad(cmd, "`fit` is only available for UV image projections"));
     }
     Ok(proj)
 }

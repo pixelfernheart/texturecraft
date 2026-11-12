@@ -116,6 +116,18 @@ fn save_as_offers_the_project_format_and_a_name() {
 }
 
 #[test]
+fn mesh_export_opens_the_in_app_picker_with_a_format_aware_name() {
+    let mut h = harness(false);
+    invoke(&mut h, "file.exportMesh");
+    h.run_steps(3);
+
+    let Some(dialog) = h.state().ui.windows.mesh_export_dialog.as_ref() else { panic!("the in-app mesh export picker was not opened") };
+    assert_eq!(dialog.format, "obj");
+    assert!(dialog.file_name.ends_with(".obj"));
+    assert_eq!(h.state().file_dialogs.pending(), 0, "mesh export does not open a native save dialog");
+}
+
+#[test]
 fn a_save_answer_for_a_replaced_project_saves_nothing() {
     let file = temp_file("replaced", "kept.tcraft");
     let mut h = harness(true);

@@ -1,6 +1,6 @@
 //! Procedural patterns and projections.
 
-use texturecraft_core::{Decal, Procedural, ProceduralKind, Projection};
+use texturecraft_core::{Decal, ImageFit, Procedural, ProceduralKind, Projection};
 use texturecraft_geom::glam::{Vec2, Vec3};
 use texturecraft_texel::noise;
 
@@ -165,7 +165,7 @@ fn shape(pr: &Procedural, v: f32) -> f32 {
 pub fn procedural(pr: &Procedural, proj: &Projection, c: &Coords) -> f32 {
     let s = pr.scale.max(1e-4);
     let v = match proj {
-        Projection::Uv { scale, rotation, offset } => {
+        Projection::Uv { scale, rotation, offset, .. } => {
             let (sn, cs) = rotation.to_radians().sin_cos();
             let uv = Vec2::new(c.uv.x * cs - c.uv.y * sn, c.uv.x * sn + c.uv.y * cs) * Vec2::from(*scale) + Vec2::from(*offset);
             // 2D patterns sample a slice of the 3D pattern.
@@ -212,13 +212,13 @@ pub fn procedural(pr: &Procedural, proj: &Projection, c: &Coords) -> f32 {
 
 /// Texture coordinates (and blend weights) at which an image is sampled for a projection
 /// (unused slots weigh 0; no allocation per texel).
-pub fn image_samples(proj: &Projection, c: &Coords) -> [(Vec2, f32); 3] {
+pub fn image_samples(proj: &Projection, c: &Coords, image_aspect: f32, target_aspect: f32) -> [(Vec2, f32); 3] {
     let one = |uv: Vec2| [(uv, 1.0), (Vec2::ZERO, 0.0), (Vec2::ZERO, 0.0)];
     match proj {
-        Projection::Uv { scale, rotation, offset } => {
+        Projection::Uv { scale, rotation, offset, fit } => {
             let (sn, cs) = rotation.to_radians().sin_cos();
             let uv = Vec2::new(c.uv.x * cs - c.uv.y * sn, c.uv.x * sn + c.uv.y * cs) * Vec2::from(*scale) + Vec2::from(*offset);
-            one(uv)
+            fit_sample(uv, *fit, image_aspect, target_aspect).map_or([(Vec2::ZERO, 0.0); 3], one)
         }
         Projection::Triplanar { scale, sharpness, offset } => {
             let p = c.pos * *scale + Vec3::from(*offset);
@@ -251,7 +251,42 @@ pub fn image_samples(proj: &Projection, c: &Coords) -> [(Vec2, f32); 3] {
             let u = b.atan2(a) / std::f32::consts::TAU + 0.5;
             one(Vec2::new(u, 0.5 - h * 0.5) * *scale)
         }
-        Projection::Decal(_) => one(c.uv),
+        Projection::Decal(d) => {
+            let aspect = d.size[0] / d.size[1].max(1e-6);
+            fit_sample(c.uv, d.fit, image_aspect, aspect).map_or([(Vec2::ZERO, 0.0); 3], one)
+        }
+    }
+}
+
+/// Fit an image within one projection tile, returning None for the empty area of Contain.
+fn fit_sample(uv: Vec2, fit: ImageFit, image_aspect: f32, target_aspect: f32) -> Option<Vec2> {
+    if fit == ImageFit::Stretch {
+        return Some(uv);
+    }
+
+    let image_aspect = image_aspect.max(1e-6);
+    let target_aspect = target_aspect.max(1e-6);
+    let local = uv - uv.floor();
+    match fit {
+        ImageFit::Stretch => Some(uv),
+        ImageFit::Cover if image_aspect > target_aspect => {
+            let width = target_aspect / image_aspect;
+            Some(Vec2::new((local.x - 0.5) * width + 0.5, local.y))
+        }
+        ImageFit::Cover => {
+            let height = image_aspect / target_aspect;
+            Some(Vec2::new(local.x, (local.y - 0.5) * height + 0.5))
+        }
+        ImageFit::Contain if image_aspect > target_aspect => {
+            let height = target_aspect / image_aspect;
+            let y = (local.y - 0.5) / height + 0.5;
+            (0.0..=1.0).contains(&y).then_some(Vec2::new(local.x, y))
+        }
+        ImageFit::Contain => {
+            let width = image_aspect / target_aspect;
+            let x = (local.x - 0.5) / width + 0.5;
+            (0.0..=1.0).contains(&x).then_some(Vec2::new(x, local.y))
+        }
     }
 }
 
@@ -318,6 +353,7 @@ mod tests {
                 rotation: 0.0,
                 offset: [0.0; 2],
                 depth: 1.0,
+                fit: ImageFit::Stretch,
             }),
         ];
         for k in ProceduralKind::ALL {
@@ -339,7 +375,16 @@ mod tests {
 
     #[test]
     fn decals_cover_their_frame_facing_them() {
-        let d = Decal { center: [0.0; 3], normal: [0.0, 0.0, 1.0], up: [0.0, 1.0, 0.0], size: [2.0, 1.0], rotation: 0.0, offset: [0.0; 2], depth: 0.5 };
+        let d = Decal {
+            center: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+            size: [2.0, 1.0],
+            rotation: 0.0,
+            offset: [0.0; 2],
+            depth: 0.5,
+            fit: ImageFit::Stretch,
+        };
         let z = Vec3::Z;
         let (uv, w) = decal_uv(&d, Vec3::new(0.5, 0.25, 0.0), z).unwrap();
         assert!((uv - Vec2::new(0.75, 0.25)).length() < 1e-5 && (w - 1.0).abs() < 1e-5, "{uv} {w}");
@@ -354,6 +399,20 @@ mod tests {
         assert!((c[0] - Vec3::new(-1.0, 0.5, 0.0)).length() < 1e-5 && (c[2] - Vec3::new(1.0, -0.5, 0.0)).length() < 1e-5);
         assert!(decal_axes(&Decal { normal: [0.0; 3], ..d }).is_none());
         assert!(decal_uv(&Decal { size: [f32::NAN; 2], ..d }, Vec3::ZERO, z).is_none());
+    }
+
+    #[test]
+    fn image_fit_modes_preserve_aspect_and_contain_leaves_empty_space() {
+        let coords = |uv| Coords { uv, pos: Vec3::ZERO, nrm: Vec3::Z };
+        let cover = Projection::Uv { scale: [1.0; 2], rotation: 0.0, offset: [0.0; 2], fit: ImageFit::Cover };
+        let left = image_samples(&cover, &coords(Vec2::new(0.0, 0.5)), 2.0, 1.0)[0];
+        assert!((left.0.x - 0.25).abs() < 1e-6 && (left.1 - 1.0).abs() < 1e-6);
+
+        let contain = Projection::Uv { scale: [1.0; 2], rotation: 0.0, offset: [0.0; 2], fit: ImageFit::Contain };
+        let inside = image_samples(&contain, &coords(Vec2::new(0.5, 0.25)), 2.0, 1.0)[0];
+        assert!((inside.0.y).abs() < 1e-6 && (inside.1 - 1.0).abs() < 1e-6);
+        let outside = image_samples(&contain, &coords(Vec2::new(0.5, 0.1)), 2.0, 1.0)[0];
+        assert_eq!(outside.1, 0.0);
     }
 
     #[test]

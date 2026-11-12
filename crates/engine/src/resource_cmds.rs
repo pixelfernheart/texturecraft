@@ -21,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add fill layer from image",
             [],
             None,
-            "{name, channel?: baseColor, projection?: uv|triplanar|planar, scale?}",
+            "{name, channel?: baseColor, projection?: uv|triplanar|planar, scale?, fit?: stretch|contain|cover (uv image)}",
             always,
             add_image_fill
         ),

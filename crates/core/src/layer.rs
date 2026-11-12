@@ -153,7 +153,13 @@ impl Layer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Projection {
     /// Texture coordinates of the mesh.
-    Uv { scale: [f32; 2], rotation: f32, offset: [f32; 2] },
+    Uv {
+        scale: [f32; 2],
+        rotation: f32,
+        offset: [f32; 2],
+        #[serde(default)]
+        fit: ImageFit,
+    },
     /// World-space box projection blended by the normal.
     Triplanar { scale: f32, sharpness: f32, offset: [f32; 3] },
     /// World-space planar projection along an axis (0 = X, 1 = Y, 2 = Z).
@@ -165,6 +171,19 @@ pub enum Projection {
     /// A geometry decal: the image projected from a frame placed on the surface (outside the
     /// frame, behind it or beyond its depth the fill does not cover).
     Decal(Decal),
+}
+
+/// How an image is mapped into a projection frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFit {
+    /// Map the whole image into the frame, allowing distortion.
+    #[default]
+    Stretch,
+    /// Preserve the image aspect ratio and leave uncovered space in the frame.
+    Contain,
+    /// Preserve the image aspect ratio and crop it to fill the frame.
+    Cover,
 }
 
 /// The frame a decal projects from (world space).
@@ -184,11 +203,14 @@ pub struct Decal {
     pub offset: [f32; 2],
     /// How far in front of and behind the frame the decal reaches (world units).
     pub depth: f32,
+    /// How the image is fit inside the decal frame.
+    #[serde(default)]
+    pub fit: ImageFit,
 }
 
 impl Default for Projection {
     fn default() -> Self {
-        Projection::Uv { scale: [1.0, 1.0], rotation: 0.0, offset: [0.0, 0.0] }
+        Projection::Uv { scale: [1.0, 1.0], rotation: 0.0, offset: [0.0, 0.0], fit: ImageFit::Stretch }
     }
 }
 
@@ -543,9 +565,6 @@ pub struct Generator {
     pub noise_amount: f32,
     pub noise_scale: f32,
     pub seed: u32,
-    /// Added to the finished mask value and clamped to 0..1 (−1..1; 0 = unchanged).
-    #[serde(default)]
-    pub offset: f32,
     /// Direction for `Position` / `Direction` generators (world space).
     pub direction: [f32; 3],
     pub invert: bool,
@@ -568,19 +587,7 @@ impl Generator {
             GeneratorKind::EdgeWear => Some(CurvatureDetail { mode: CurvatureMode::Edges, weights: CurvatureDetail::EDGE_WEIGHTS }),
             _ => None,
         };
-        Generator { kind, level, softness, noise_amount, noise_scale: 8.0, seed: 7, offset: 0.0, direction: [0.0, 1.0, 0.0], invert: false, detail }
-    }
-
-    /// The mask value for a (noise-broken) signal `s`: the smooth threshold at `level` over
-    /// `softness`, inverted if asked, then shifted by `offset` (a non-finite offset counts as 0).
-    pub fn shape(&self, s: f32) -> f32 {
-        let th = 1.0 - self.level.clamp(0.0, 1.0);
-        let soft = self.softness.max(1e-3);
-        let t = ((s - (th - soft)) / (2.0 * soft)).clamp(0.0, 1.0);
-        let v = t * t * (3.0 - 2.0 * t);
-        let v = if self.invert { 1.0 - v } else { v };
-        let offset = if self.offset.is_finite() { self.offset } else { 0.0 };
-        (v + offset).clamp(0.0, 1.0)
+        Generator { kind, level, softness, noise_amount, noise_scale: 8.0, seed: 7, direction: [0.0, 1.0, 0.0], invert: false, detail }
     }
 }
 
@@ -1081,30 +1088,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generator_offset_shifts_the_mask_value() {
-        let mut g = Generator::new(GeneratorKind::Position);
-        let base = g.shape(0.2);
-        assert!(base < 0.5);
-        g.offset = 0.3;
-        assert!((g.shape(0.2) - (base + 0.3)).abs() < 1e-6, "the offset is added");
-        g.offset = 1.0;
-        assert_eq!(g.shape(0.2), 1.0, "and the result is clamped");
-        g.offset = -1.0;
-        assert_eq!(g.shape(0.9), 0.0);
-    }
-
-    #[test]
-    fn generator_non_finite_offset_counts_as_zero() {
-        let mut g = Generator::new(GeneratorKind::Position);
-        let base: Vec<f32> = [0.0, 0.2, 0.5, 0.9].iter().map(|&s| g.shape(s)).collect();
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            g.offset = bad;
-            let got: Vec<f32> = [0.0, 0.2, 0.5, 0.9].iter().map(|&s| g.shape(s)).collect();
-            assert_eq!(got, base, "offset {bad} behaves like 0");
-        }
-    }
-
-    #[test]
     fn curvature_generators_saved_before_detail_sizes_load_without_them() {
         let mut saved = serde_json::to_value(Generator::new(GeneratorKind::Curvature)).unwrap();
         assert!(saved.get("detail").is_some(), "new curvature generators have detail sizes");
@@ -1113,6 +1096,27 @@ mod tests {
         let loaded: Generator = serde_json::from_value(saved).unwrap();
         assert_eq!(loaded.detail, None);
         assert_eq!(Generator::new(GeneratorKind::Dirt).detail, None, "only curvature and edge wear generators have detail sizes");
+    }
+
+    #[test]
+    fn older_uv_and_decal_projections_default_to_stretch() {
+        let mut uv = serde_json::to_value(Projection::default()).unwrap();
+        uv["Uv"].as_object_mut().unwrap().remove("fit");
+        assert_eq!(serde_json::from_value::<Projection>(uv).unwrap(), Projection::default());
+
+        let decal = Decal {
+            center: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+            size: [1.0; 2],
+            rotation: 0.0,
+            offset: [0.0; 2],
+            depth: 1.0,
+            fit: ImageFit::Cover,
+        };
+        let mut saved = serde_json::to_value(Projection::Decal(decal)).unwrap();
+        saved["Decal"].as_object_mut().unwrap().remove("fit");
+        assert!(matches!(serde_json::from_value::<Projection>(saved).unwrap(), Projection::Decal(d) if d.fit == ImageFit::Stretch));
     }
 
     #[test]

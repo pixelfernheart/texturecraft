@@ -1,11 +1,30 @@
-*~
-plan/
-/target
-target/
-/dist
+# Local-only content
+/plan/
 /corpus
 /log
 /secrets
 /temp
 /craft-fonts
 *.tcraft.tmp
+
+# Build and packaging output
+/target/
+/dist/
+/build/
+*.AppImage
+*.AppImage.zsync
+*.deb
+*.rpm
+
+# Temporary files and logs
+*.tmp
+*.log
+*~
+
+# IDE settings
+.vscode/
+.idea/
+
+# Operating-system files
+.DS_Store
+Thumbs.db

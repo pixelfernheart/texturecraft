@@ -8,6 +8,7 @@ mod usdc;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+use base64::Engine as _;
 use serde_json::{Map, Value, json};
 use texturecraft_core::{Channel, NormalFormat};
 use texturecraft_geom::glam::Vec3;
@@ -67,50 +68,47 @@ pub fn obj_with_mtl(mesh: &Mesh, name: &str, stem: &str, textures: &[Vec<Exporte
 }
 
 fn obj_text(mesh: &Mesh, name: &str, mtllib: Option<&str>) -> String {
-    let mut text = String::with_capacity(mesh.positions.len() * 96 + mesh.indices.len() * 12);
-    let _ = writeln!(text, "# {}, exported by TextureCraft", token(name));
+    let mut s = String::with_capacity(mesh.positions.len() * 96 + mesh.indices.len() * 12);
+    let _ = writeln!(s, "# {}, exported by TextureCraft", token(name));
     if let Some(lib) = mtllib {
-        let _ = writeln!(text, "mtllib {lib}");
+        let _ = writeln!(s, "mtllib {lib}");
     }
-    let _ = writeln!(text, "o {}", token(name));
+    let _ = writeln!(s, "o {}", token(name));
     for p in &mesh.positions {
-        let _ = writeln!(text, "v {} {} {}", p.x, p.y, p.z);
+        let _ = writeln!(s, "v {} {} {}", p.x, p.y, p.z);
     }
-
     let uvs = mesh.uvs.len() == mesh.positions.len();
     let normals = mesh.normals.len() == mesh.positions.len();
     if uvs {
         for t in &mesh.uvs {
-            let _ = writeln!(text, "vt {} {}", t.x, 1.0 - t.y);
+            let _ = writeln!(s, "vt {} {}", t.x, 1.0 - t.y);
         }
     }
     if normals {
         for n in &mesh.normals {
-            let _ = writeln!(text, "vn {} {} {}", n.x, n.y, n.z);
+            let _ = writeln!(s, "vn {} {} {}", n.x, n.y, n.z);
         }
     }
-
     let materials = unique_ids(&mesh.materials, token);
-    for part in &parts(mesh, name) {
-        let material = materials.get(part.material).map_or("default", String::as_str);
-        let _ = writeln!(text, "g {}\nusemtl {material}", token(&part.name));
-        let (a, b) = (part.start as usize, part.start as usize + part.count as usize);
-        for triangle in mesh.indices.get(a..b).unwrap_or_default().as_chunks::<3>().0 {
-            text.push('f');
-            for i in triangle {
+    for sm in &parts(mesh, name) {
+        let material = materials.get(sm.material).map_or("default", String::as_str);
+        let _ = writeln!(s, "g {}\nusemtl {material}", token(&sm.name));
+        let (a, b) = (sm.start as usize, sm.start as usize + sm.count as usize);
+        for tri in mesh.indices.get(a..b).unwrap_or_default().chunks_exact(3) {
+            s.push('f');
+            for i in tri {
                 let i = i + 1;
                 let _ = match (uvs, normals) {
-                    (true, true) => write!(text, " {i}/{i}/{i}"),
-                    (true, false) => write!(text, " {i}/{i}"),
-                    (false, true) => write!(text, " {i}//{i}"),
-                    (false, false) => write!(text, " {i}"),
+                    (true, true) => write!(s, " {i}/{i}/{i}"),
+                    (true, false) => write!(s, " {i}/{i}"),
+                    (false, true) => write!(s, " {i}//{i}"),
+                    (false, false) => write!(s, " {i}"),
                 };
             }
-            text.push('\n');
+            s.push('\n');
         }
     }
-
-    text
+    s
 }
 
 /// `id` of each material name, made unique with `_2`, `_3`… where two would be the same, also
@@ -301,10 +299,36 @@ impl GlbBuilder {
     }
 }
 
+/// The mesh as self-contained glTF JSON named `name`, with `textures[i]` on material `i`
+/// (materials without an entry get a plain one).
+pub fn gltf_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Vec<u8>> {
+    let (mut doc, bin) = gltf_parts(mesh, name, textures)?;
+    doc["buffers"][0]["uri"] = format!("data:application/octet-stream;base64,{}", base64::engine::general_purpose::STANDARD.encode(bin)).into();
+    serde_json::to_vec(&doc).map_err(|e| FormatError::Invalid(format!("glTF JSON: {e}")))
+}
+
 /// The mesh as binary glTF (GLB) named `name`, with `textures[i]` on material `i` (materials
 /// without an entry get a plain one). Vertex data is written as is: the mesh already follows
 /// glTF's conventions.
 pub fn glb_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Vec<u8>> {
+    let (doc, mut bin) = gltf_parts(mesh, name, textures)?;
+    let mut js = serde_json::to_vec(&doc).map_err(|e| FormatError::Invalid(format!("glTF JSON: {e}")))?;
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let total = 12 + 8 + js.len() + 8 + bin.len();
+    let len32 = |v: usize| u32::try_from(v).map(u32::to_le_bytes).map_err(|_| FormatError::TooLarge(format!("the GLB would be {total} bytes (limit 4 GiB)")));
+    let mut out = Vec::with_capacity(total);
+    for chunk in [&b"glTF"[..], &2u32.to_le_bytes(), &len32(total)?, &len32(js.len())?, b"JSON", &js, &len32(bin.len())?, b"BIN\0", &bin] {
+        out.extend_from_slice(chunk);
+    }
+    Ok(out)
+}
+
+fn gltf_parts(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<(Value, Vec<u8>)> {
     let n = mesh.positions.len();
     if n == 0 || mesh.indices.len() < 3 {
         return Err(FormatError::Invalid("the mesh is empty".into()));
@@ -363,21 +387,7 @@ pub fn glb_bytes(mesh: &Mesh, name: &str, textures: &[GlbTextures]) -> Result<Ve
             doc[key] = list.into();
         }
     }
-    let mut js = serde_json::to_vec(&doc).map_err(|e| FormatError::Invalid(format!("glTF JSON: {e}")))?;
-    while !js.len().is_multiple_of(4) {
-        js.push(b' ');
-    }
-    let mut bin = g.bin;
-    while !bin.len().is_multiple_of(4) {
-        bin.push(0);
-    }
-    let total = 12 + 8 + js.len() + 8 + bin.len();
-    let len32 = |v: usize| u32::try_from(v).map(u32::to_le_bytes).map_err(|_| FormatError::TooLarge(format!("the GLB would be {total} bytes (limit 4 GiB)")));
-    let mut out = Vec::with_capacity(total);
-    for chunk in [&b"glTF"[..], &2u32.to_le_bytes(), &len32(total)?, &len32(js.len())?, b"JSON", &js, &len32(bin.len())?, b"BIN\0", &bin] {
-        out.extend_from_slice(chunk);
-    }
-    Ok(out)
+    Ok((doc, g.bin))
 }
 
 /// OBJ names end at whitespace.

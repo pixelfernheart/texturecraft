@@ -4,7 +4,6 @@
 
 use serde_json::{Value, json};
 use texturecraft_core::{BlendMode, Channel, NormalFormat};
-use texturecraft_geom::glam::Vec3;
 
 use crate::{EngineError, Result, Session};
 
@@ -72,7 +71,6 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::template_cmds::specs());
         v.extend(crate::project_cmds::specs());
         v.extend(crate::bake::specs());
-        v.extend(crate::bake_preview::specs());
         v.extend(crate::materialx_cmds::specs());
         v.extend(crate::file_cmds::specs());
         v.extend(crate::preset_cmds::specs());
@@ -134,14 +132,6 @@ pub(crate) fn f32p(p: &Value, key: &str) -> Option<f32> {
 
 pub(crate) fn u64p(p: &Value, key: &str) -> Option<u64> {
     p.get(key).and_then(|v| v.as_u64().or_else(|| v.as_f64().filter(|f| f.is_finite() && *f >= 0.0).map(|f| f.round() as u64)))
-}
-
-/// A `[x, y, z]` param of finite numbers
-pub(crate) fn vec3(params: &Value, key: &str) -> Option<Vec3> {
-    let [x, y, z] = params.get(key)?.as_array()?.as_slice() else { return None };
-    let vector = Vec3::new(x.as_f64()? as f32, y.as_f64()? as f32, z.as_f64()? as f32);
-
-    vector.is_finite().then_some(vector)
 }
 
 pub(crate) fn boolp(p: &Value, key: &str) -> Option<bool> {

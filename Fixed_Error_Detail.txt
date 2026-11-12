@@ -1,0 +1,25 @@
+This is based on recent v0.5.0.
+
+The error is on GLBT export error.
+When i select export filetype as glbt instead on obj, 
+1. it didn't chanhe it's file name.
+2. even though i changed manually inside, it saved as glbt.obj.
+
+https://ibb.co/RTvm91yr
+https://ibb.co/Kp9C7Lrn
+https://ibb.co/whknNj43
+https://ibb.co/0Rv75tVZ
+
+Images are shared of error.
+
+Now i fixed it and even add glb(binary) as another export option.
+i hope i'm sharing the correct file, please download and try this then if you liek then include it.
+
+https://ibb.co/MxRz6zBQ
+https://ibb.co/SD0MjjkQ
+https://ibb.co/gbwrNxq3
+https://ibb.co/NnKyfZ49
+
+those are fixed Images.
+
+Thank you. ^^

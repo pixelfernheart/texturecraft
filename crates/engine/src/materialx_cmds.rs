@@ -14,9 +14,7 @@ use serde_json::{Value, json};
 use texturecraft_core::{Channel, Fill, Layer, LayerKind, Projection, Source};
 use texturecraft_formats::materialx_read::{Material, Value as Mtlx};
 
-use crate::commands::{CommandSpec, always};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::commands::{bad, strp};
+use crate::commands::{CommandSpec, always, bad, strp};
 use crate::{EngineError, Result, Session, cmd};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -41,7 +39,10 @@ impl Session {
         let mut warnings = material.warnings.clone();
         let ts = self.ts();
         let available = self.doc.project.texture_set(ts).map(|t| t.channel_list()).unwrap_or_default();
-        let mut fill = Fill { projection: Projection::Uv { scale: material.uv_tiling, rotation: 0.0, offset: [0.0, 0.0] }, ..Fill::default() };
+        let mut fill = Fill {
+            projection: Projection::Uv { scale: material.uv_tiling, rotation: 0.0, offset: [0.0, 0.0], fit: texturecraft_core::ImageFit::Stretch },
+            ..Fill::default()
+        };
         // Resources to add (name and encoded bytes), and their decoded images for the session.
         let mut added: Vec<(String, Arc<Vec<u8>>)> = Vec::new();
         let mut decoded = Vec::new();

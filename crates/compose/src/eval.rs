@@ -2,8 +2,6 @@
 //! tile by tile in parallel. This is the reference implementation (the oracle) for the viewport
 //! and for export.
 
-pub(crate) mod thumbnail;
-
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -1013,7 +1011,7 @@ fn over(c: &ChanPlan, mode: BlendMode, v: [f32; 3], cov: f32, p: [f32; 3], a: f3
 }
 
 /// The plain UV projection a decal's frame coordinates are sampled through.
-const DECAL_UV: Projection = Projection::Uv { scale: [1.0, 1.0], rotation: 0.0, offset: [0.0, 0.0] };
+const DECAL_UV: Projection = Projection::Uv { scale: [1.0, 1.0], rotation: 0.0, offset: [0.0, 0.0], fit: texturecraft_core::ImageFit::Stretch };
 
 /// Per-texel context.
 struct Texel<'a, 'b> {
@@ -1023,6 +1021,7 @@ struct Texel<'a, 'b> {
     /// Offset of this texel inside a tile (in texels).
     o: usize,
     res: u32,
+    target_aspect: f32,
     coords: Option<Coords>,
     stroke: f32,
     /// `eval` stops when it reaches this layer.
@@ -1063,7 +1062,11 @@ impl<'t> Tape<'t> {
 
 impl<'a, 'b> Texel<'a, 'b> {
     fn new(inp: &'b Inputs<'a>, x: u32, y: u32, o: usize, stroke: f32) -> Self {
-        Texel { inp, x, y, o, res: inp.gbuf.width, coords: None, stroke, stop: None, anchors: Vec::new(), tape: Tape::Off }
+        let target_aspect = inp.project.texture_sets.get(inp.ts).map_or(1.0, |set| {
+            let (w, h) = set.size();
+            w as f32 / h.max(1) as f32
+        });
+        Texel { inp, x, y, o, res: inp.gbuf.width, target_aspect, coords: None, stroke, stop: None, anchors: Vec::new(), tape: Tape::Off }
     }
 
     /// Run `f` with `tape` as this texel's tape.
@@ -1162,56 +1165,64 @@ impl<'a, 'b> Texel<'a, 'b> {
     }
 
     /// How much a fill projected by `proj` covers this texel: 1, or for a decal its frame
-    /// coverage times the alpha of its first image source.
+    /// coverage and image alpha; a contained image also leaves its fit area uncovered.
     fn cover<'s>(&mut self, mut sources: impl Iterator<Item = &'s Source>, proj: &Projection) -> f32 {
-        if !matches!(proj, Projection::Decal(_)) {
+        let is_decal = matches!(proj, Projection::Decal(_));
+        let is_contained = matches!(proj, Projection::Uv { fit: texturecraft_core::ImageFit::Contain, .. });
+        if !is_decal && !is_contained {
             return 1.0;
         }
         let (c, _, w) = self.projected(proj);
+        if w <= 0.0 {
+            return 0.0;
+        }
         let image = sources.find_map(|s| match s {
             Source::Image { name, .. } => self.inp.images.get(name),
             _ => None,
         });
-        w * image.map_or(1.0, |img| img.sample(c.uv.x, c.uv.y)[3].clamp(0.0, 1.0))
+        let Some(img) = image else { return w };
+        let samples = image_samples(proj, &c, img.width as f32 / img.height.max(1) as f32, self.target_aspect);
+        let coverage = if is_decal {
+            samples.into_iter().map(|(uv, weight)| img.sample(uv.x, uv.y)[3] * weight).sum::<f32>()
+        } else {
+            samples.into_iter().map(|(_, weight)| weight).sum::<f32>()
+        };
+        w * coverage.clamp(0.0, 1.0)
     }
 
-    /// The value `source` gives this texel through `projection`, read as a channel of `kind`
-    fn source(&mut self, source: &Source, projection: &Projection, kind: ChannelKind) -> [f32; 3] {
-        match source {
-            Source::Uniform(value) => *value,
+    fn source(&mut self, s: &Source, proj: &Projection, kind: ChannelKind) -> [f32; 3] {
+        match s {
+            Source::Uniform(v) => *v,
             Source::Procedural { pattern, low, high } => {
-                let (coords, projection, _) = self.projected(projection);
-                let amount = procedural(pattern, projection, &coords);
-                mix3(*low, *high, amount)
+                let (c, proj, _) = self.projected(proj);
+                let t = procedural(pattern, proj, &c);
+                mix3(*low, *high, t)
             }
             Source::Image { name, normal_format } => {
-                let Some(image) = self.inp.images.get(name) else { return [0.5; 3] };
-
-                let (coords, projection, _) = self.projected(projection);
-                let mut sum = [0.0f32; 4];
-                for (uv, weight) in image_samples(projection, &coords).into_iter().filter(|(_, weight)| *weight > 0.0) {
-                    for (total, value) in sum.iter_mut().zip(image.sample(uv.x, uv.y)) {
-                        *total += value * weight;
+                let Some(img) = self.inp.images.get(name) else { return [0.5; 3] };
+                let (c, _, _) = self.projected(proj);
+                let mut acc = [0.0f32; 4];
+                for (uv, w) in image_samples(proj, &c, img.width as f32 / img.height.max(1) as f32, self.target_aspect).into_iter().filter(|(_, w)| *w > 0.0) {
+                    let s = img.sample(uv.x, uv.y);
+                    for k in 0..4 {
+                        acc[k] += s[k] * w;
                     }
                 }
-
-                let rgb = [sum[0], sum[1], sum[2]];
                 match kind {
-                    ChannelKind::Color if image.srgb => rgb.map(texturecraft_texel::srgb_to_linear),
-                    // Normal channels are OpenGL (+Y up the image): a DirectX image's green flips
-                    ChannelKind::NormalMap if *normal_format == NormalFormat::DirectX => [rgb[0], 1.0 - rgb[1], rgb[2]],
-                    ChannelKind::Color | ChannelKind::NormalMap => rgb,
-                    // A one-value channel or mask reads the image's gray, so a color image works as a mask
-                    ChannelKind::Scalar => [lum(rgb); 3],
-                    ChannelKind::Signed => [lum(rgb) * 2.0 - 1.0; 3],
+                    ChannelKind::Color if img.srgb => [acc[0], acc[1], acc[2]].map(texturecraft_texel::srgb_to_linear),
+                    // Normal channels are OpenGL (+Y up the image): a DirectX image's green flips.
+                    ChannelKind::NormalMap if *normal_format == NormalFormat::DirectX => [acc[0], 1.0 - acc[1], acc[2]],
+                    ChannelKind::Color | ChannelKind::NormalMap => [acc[0], acc[1], acc[2]],
+                    ChannelKind::Scalar => [acc[0]; 3],
+                    ChannelKind::Signed => [acc[0] * 2.0 - 1.0; 3],
                 }
             }
             Source::Anchor { anchor, channel } => {
-                // An anchor not evaluated yet (above this layer, hidden) reads the channel default
-                let anchored = self.anchors.iter().rev().find(|(id, _)| id == anchor).and_then(|(_, values)| values.get(channel.index()).copied());
-                let value = anchored.unwrap_or_else(|| channel.default_value());
+                // An anchor not evaluated yet (above this layer, hidden) reads the channel default.
+                let v = self.anchors.iter().rev().find(|(id, _)| id == anchor).and_then(|(_, acc)| acc.get(channel.index()).copied());
+                let v = v.unwrap_or_else(|| channel.default_value());
                 let gray = matches!(channel.kind(), ChannelKind::Color | ChannelKind::NormalMap) && matches!(kind, ChannelKind::Scalar | ChannelKind::Signed);
-                if gray { [lum(value); 3] } else { value }
+                if gray { [lum(v); 3] } else { v }
             }
         }
     }
@@ -1241,8 +1252,12 @@ impl<'a, 'b> Texel<'a, 'b> {
             signal
         };
 
-        // A smooth step from black to white over 2 × softness around 1 − level, then the offset
-        generator.shape(signal)
+        // A smooth step from black to white over 2 × softness around 1 − level
+        let threshold = 1.0 - generator.level.clamp(0.0, 1.0);
+        let softness = generator.softness.max(1e-3);
+        let ramp = ((signal - (threshold - softness)) / (2.0 * softness)).clamp(0.0, 1.0);
+        let value = ramp * ramp * (3.0 - 2.0 * ramp);
+        if generator.invert { 1.0 - value } else { value }
     }
 
     /// The curvature of `detail`'s mode at this texel: each detail size's edges and cavities, weighted and combined like a screen blend.
@@ -2205,67 +2220,60 @@ pub type FlatTile = (Channel, (u32, u32), Vec<u16>);
 /// Flatten one paint or fill layer: its content (with content effects) times its mask, as
 /// premultiplied (value, coverage) tiles per enabled channel, ready to become a plain paint
 /// layer. Groups are not supported (None).
-pub fn flatten_layer(inputs: &Inputs, id: LayerId, tiles: &[(u32, u32)]) -> Option<Vec<FlatTile>> {
-    let set = inputs.project.texture_set(inputs.ts).ok()?;
-    if inputs.project.content_layer(id)?.is_group() {
+pub fn flatten_layer(inp: &Inputs, id: LayerId, tiles: &[(u32, u32)]) -> Option<Vec<FlatTile>> {
+    let set = inp.project.texture_set(inp.ts).ok()?;
+    if inp.project.content_layer(id)?.is_group() {
         return None;
     }
-
     let channels: Vec<Channel> = set.channel_list();
-
-    // Plan the layer forced visible so hidden layers flatten too
-    let mut solo = inputs.project.clone();
+    // Plan the layer forced visible so hidden layers flatten too.
+    let mut solo = inp.project.clone();
     if let Some(l) = solo.layers.get_mut(&id) {
         l.visible = true;
     }
-    let visible_inputs = Inputs { project: &solo, preview: None, block_scales: inputs.block_scales.clone(), ..*inputs };
-    let fields = neighbourhood_fields(&visible_inputs, &channels, tiles);
-
+    let solo_inp = Inputs { project: &solo, preview: None, block_scales: inp.block_scales.clone(), ..*inp };
+    let fields = neighbourhood_fields(&solo_inp, &channels, tiles);
     let out: Vec<Vec<FlatTile>> = tiles
         .par_iter()
         .map(|&(tx, ty)| {
-            let nodes = plan(&visible_inputs, &[id], &channels, tx, ty, 0, Some(&fields));
+            let nodes = plan(&solo_inp, &[id], &channels, tx, ty, 0, Some(&fields));
             let Some(n) = nodes.first() else { return Vec::new() };
-            let full = anchor_plan(&visible_inputs, id, &channels, tx, ty, Some(&fields));
-            let mut buffers: Vec<(Channel, Vec<u16>, bool)> =
+            let full = anchor_plan(&solo_inp, id, &channels, tx, ty, Some(&fields));
+            let mut bufs: Vec<(Channel, Vec<u16>, bool)> =
                 n.chans.iter().filter_map(|c| Channel::ALL.get(c.ch).map(|ch| (*ch, vec![0u16; TILE_AREA * (c.comps + 1)], false))).collect();
-            for (ch, buffer, _) in &mut buffers {
+            for (ch, buf, _) in &mut bufs {
                 if ch.kind() == ChannelKind::Signed {
-                    for pixel in buffer.as_chunks_mut::<2>().0 {
-                        pixel[0] = to_u16_signed(0.0);
+                    for px in buf.chunks_exact_mut(2) {
+                        px[0] = to_u16_signed(0.0);
                     }
                 }
             }
-
-            for (x, y, o) in tile_texels(inputs.gbuf, tx, ty) {
-                let mut tex = Texel::new(&visible_inputs, x, y, o, 0.0);
+            for (x, y, o) in tile_texels(inp.gbuf, tx, ty) {
+                let mut tex = Texel::new(&solo_inp, x, y, o, 0.0);
                 if !full.is_empty() {
                     tex.anchors_below(&full, id);
                 }
                 let m = tex.node_mask(n);
-                for (c, (ch, buffer, any)) in n.chans.iter().zip(buffers.iter_mut()) {
+                for (c, (ch, buf, any)) in n.chans.iter().zip(bufs.iter_mut()) {
                     let Some((v, cov)) = tex.content(&n.content, c) else { continue };
                     let a = (cov * m).clamp(0.0, 1.0);
                     if a <= 0.0 {
                         continue;
                     }
-
                     *any = true;
                     let comps = c.comps;
-                    let Some(pixel) = buffer.get_mut(o * (comps + 1)..(o + 1) * (comps + 1)) else { continue };
-                    for (slot, pv) in pixel.iter_mut().zip(v.iter().take(comps)) {
+                    let Some(px) = buf.get_mut(o * (comps + 1)..(o + 1) * (comps + 1)) else { continue };
+                    for (slot, pv) in px.iter_mut().zip(v.iter().take(comps)) {
                         *slot = if ch.kind() == ChannelKind::Signed { to_u16_signed(pv * a) } else { to_u16(pv * a) };
                     }
-                    if let Some(slot) = pixel.get_mut(comps) {
+                    if let Some(slot) = px.get_mut(comps) {
                         *slot = to_u16(a);
                     }
                 }
             }
-
-            buffers.into_iter().filter(|(_, _, any)| *any).map(|(ch, buffer, _)| (ch, (tx, ty), buffer)).collect()
+            bufs.into_iter().filter(|(_, _, any)| *any).map(|(ch, buf, _)| (ch, (tx, ty), buf)).collect()
         })
         .collect();
-
     Some(out.into_iter().flatten().collect())
 }
 
@@ -2943,6 +2951,7 @@ soft {soft:?}"
             rotation: 0.0,
             offset: [0.0; 2],
             depth: 0.5,
+            fit: texturecraft_core::ImageFit::Stretch,
         };
         let id = f.project.alloc_id();
         let mut fill = Fill { projection: Projection::Decal(d), ..Fill::default() };

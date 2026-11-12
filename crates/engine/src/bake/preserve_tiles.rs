@@ -1,6 +1,5 @@
 use texturecraft_bake::BakeOutput;
 use texturecraft_compose::BakedMaps;
-use texturecraft_core::BakedMap;
 
 use crate::{EngineError, Result};
 
@@ -30,18 +29,9 @@ pub(super) fn restore(output: &mut BakeOutput, previous: &BakedMaps, excluded_ti
         }
     }
 
-    Ok(())
-}
-
-/// Retain only maps outside the full task selection, once per completed atlas.
-/// A one-map streaming pass must not resample maps that are still scheduled to bake.
-pub(super) fn restore_unchecked(output: &mut BakeOutput, previous: &BakedMaps, excluded_tiles: &[(u32, u32)], selected: &[BakedMap]) -> Result<()> {
-    if excluded_tiles.is_empty() {
-        return Ok(());
-    }
-    let size = (output.resolution, output.height);
+    // Keep unchecked map outputs too when a partial bake changes the atlas dimensions
     for map in previous.maps.keys() {
-        if selected.contains(map) || output.maps.contains_key(map) || (previous.resolution == size.0 && previous.height(*map) == size.1) {
+        if output.maps.contains_key(map) || (previous.resolution == size.0 && previous.height(*map) == size.1) {
             continue;
         }
 
@@ -52,8 +42,6 @@ pub(super) fn restore_unchecked(output: &mut BakeOutput, previous: &BakedMaps, e
             .ok_or_else(|| EngineError::Other("resized bake map exceeds the addressable size".into()))?;
         let mut pixels = Vec::new();
         pixels.try_reserve_exact(count).map_err(|error| EngineError::Other(format!("cannot retain mesh map {}: {error}", map.id())))?;
-        #[cfg(test)]
-        RETAINED_ALLOCATIONS.with(|allocations| allocations.borrow_mut().push(*map));
         for y in 0..size.1 {
             for x in 0..size.0 {
                 let value = previous.sample(*map, x, y, size).unwrap_or_else(|| map.neutral());
@@ -63,16 +51,4 @@ pub(super) fn restore_unchecked(output: &mut BakeOutput, previous: &BakedMaps, e
         output.maps.insert(*map, pixels);
     }
     Ok(())
-}
-
-// Restoration is sequential on the calling thread. Record successful retained-buffer allocations
-// only in unit tests, without a global allocator or interference from parallel test threads.
-#[cfg(test)]
-std::thread_local! {
-    static RETAINED_ALLOCATIONS: std::cell::RefCell<Vec<texturecraft_core::BakedMap>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-#[cfg(test)]
-pub(super) fn take_retained_allocations() -> Vec<texturecraft_core::BakedMap> {
-    RETAINED_ALLOCATIONS.with(|allocations| std::mem::take(&mut *allocations.borrow_mut()))
 }

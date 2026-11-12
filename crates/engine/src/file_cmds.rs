@@ -3,8 +3,8 @@
 
 use serde_json::{Value, json};
 #[cfg(not(target_arch = "wasm32"))]
-use texturecraft_core::{NormalFormat, PROJECT_EXT};
-use texturecraft_core::{Project, TextureSet};
+use texturecraft_core::PROJECT_EXT;
+use texturecraft_core::{NormalFormat, Project, TextureSet};
 use texturecraft_formats::{ExportInput, ExportOptions, ExportedFile, FileFormat, Padding, ProjectFile};
 use texturecraft_geom::{Mesh, primitives};
 
@@ -51,7 +51,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export Mesh...",
             ["File"],
             None,
-            "{path: .obj, .glb, .usda, .usdc or .usdz file, format?: obj|glb|usda|usdc|usdz (default: from the extension, else obj); obj writes its .mtl and textures, usda/usdc their textures, next to the file} → {path, textures?}",
+            "{path: .obj, .gltf, .glb, .usda, .usdc or .usdz file, format?: obj|gltf|glb|usda|usdc|usdz (default: from the extension, else obj); gltf/glb embed geometry and textures, obj writes its .mtl and textures, usda/usdc their textures, next to the file} → {path, textures?}",
             always,
             export_mesh
         ),
@@ -118,6 +118,13 @@ impl Session {
         let files = self.material_files(texturecraft_formats::glb_export_options(), true, self.mesh.materials.len())?;
         let textures: Vec<_> = files.into_iter().map(texturecraft_formats::GlbTextures::from_files).collect();
         texturecraft_formats::glb_bytes(&self.mesh, &self.doc.project.name, &textures).map_err(fe)
+    }
+
+    /// The working mesh as self-contained glTF JSON with its geometry and textures embedded.
+    pub fn mesh_gltf_bytes(&mut self) -> Result<Vec<u8>> {
+        let files = self.material_files(texturecraft_formats::glb_export_options(), true, self.mesh.materials.len())?;
+        let textures: Vec<_> = files.into_iter().map(texturecraft_formats::GlbTextures::from_files).collect();
+        texturecraft_formats::gltf_bytes(&self.mesh, &self.doc.project.name, &textures).map_err(fe)
     }
 
     /// The working mesh as USD with a UsdPreviewSurface per material (textures like
@@ -564,7 +571,7 @@ fn export_mesh(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The mesh formats `file.exportMesh` writes.
-pub const MESH_EXPORT_FORMATS: [&str; 5] = ["obj", "glb", "usda", "usdc", "usdz"];
+pub const MESH_EXPORT_FORMATS: [&str; 6] = ["obj", "gltf", "glb", "usda", "usdc", "usdz"];
 
 /// A mesh export: the mesh file's path (with its extension) and bytes, and (obj, usda, usdc) the
 /// files it references (textures, an OBJ's MTL), by file name, to write next to it.
@@ -582,18 +589,33 @@ impl MeshExport {
 }
 
 impl Session {
-    /// The working mesh as a file for `path`, in `format` (obj, glb, usda, usdc, usdz; default:
-    /// from the extension, else OBJ). The extension is appended when it doesn't match.
+    /// The working mesh as a file for `path`, in `format` (obj, gltf, glb, usda, usdc, usdz;
+    /// default: from the extension, else OBJ). A mismatched extension is replaced.
     pub fn mesh_export(&mut self, path: &str, format: Option<&str>) -> Result<MeshExport> {
+        let path_extension = ext_of(path);
+        let path_stem = std::path::Path::new(path).file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
+        let stem_extension = ext_of(path_stem);
+        // Native save dialogs can append the selected filter extension after the suggested `.obj`.
         let ext = match format {
             Some(f) if MESH_EXPORT_FORMATS.contains(&f) => f.to_string(),
             Some(other) => return Err(bad("file.exportMesh", format!("unknown mesh format `{other}` ({})", MESH_EXPORT_FORMATS.join(", ")))),
-            None if MESH_EXPORT_FORMATS.contains(&ext_of(path).as_str()) => ext_of(path),
+            None if path_extension == "obj" && stem_extension != "obj" && MESH_EXPORT_FORMATS.contains(&stem_extension.as_str()) => stem_extension.clone(),
+            None if MESH_EXPORT_FORMATS.contains(&path_extension.as_str()) => path_extension.clone(),
             None => "obj".into(),
         };
-        let path = if ext_of(path) == ext { path.to_string() } else { format!("{path}.{ext}") };
+        let path = if ext != "obj" && path_extension == "obj" && stem_extension == ext {
+            std::path::Path::new(path).with_file_name(path_stem).display().to_string()
+        } else if ext != "obj" && path_extension == ext && stem_extension == "obj" {
+            let stem = std::path::Path::new(path_stem).file_stem().and_then(|stem| stem.to_str()).unwrap_or(path_stem);
+            std::path::Path::new(path).with_file_name(format!("{stem}.{ext}")).display().to_string()
+        } else if path_extension == ext {
+            path.to_string()
+        } else {
+            std::path::Path::new(path).with_extension(&ext).display().to_string()
+        };
         let (bytes, textures) = match (ext.as_str(), texturecraft_formats::UsdFormat::from_ext(&ext)) {
             ("glb", _) => (self.mesh_glb_bytes()?, Vec::new()),
+            ("gltf", _) => (self.mesh_gltf_bytes()?, Vec::new()),
             (_, Some(format)) => {
                 let usd = self.mesh_usd(format)?;
                 (usd.bytes, usd.textures)
@@ -721,6 +743,22 @@ f 1/1 2/2 3/3
         assert_eq!(back.mesh.materials, s.mesh.materials);
         // Base color, ORM and normal per texture set.
         assert_eq!(bytes.windows(9).filter(|w| *w == b"image/png").count(), 3 * s.mesh.materials.len());
+        let gltf_path = dir.join("checkout.gltf").display().to_string();
+        let gltf = crate::execute(&mut s, "file.exportMesh", &json!({ "path": gltf_path })).unwrap();
+        assert_eq!(gltf["path"].as_str(), Some(gltf_path.as_str()));
+        let gltf_bytes = std::fs::read(gltf["path"].as_str().unwrap()).unwrap();
+        let gltf_json: Value = serde_json::from_slice(&gltf_bytes).unwrap();
+        assert!(gltf_json["buffers"][0]["uri"].as_str().is_some_and(|uri| uri.starts_with("data:application/octet-stream;base64,")));
+        let back = texturecraft_formats::import_mesh_bytes("checkout.gltf", &gltf_bytes).unwrap();
+        assert_eq!(back.mesh.triangle_count(), s.mesh.triangle_count());
+        assert_eq!(back.mesh.materials, s.mesh.materials);
+
+        for (path, expected) in [(dir.join("suffix.gltf.obj"), dir.join("suffix.gltf")), (dir.join("reverse.obj.gltf"), dir.join("reverse.gltf"))] {
+            let exported = crate::execute(&mut s, "file.exportMesh", &json!({ "path": path.display().to_string() })).unwrap();
+            assert_eq!(exported["path"].as_str(), Some(expected.display().to_string().as_str()));
+            let bytes = std::fs::read(exported["path"].as_str().unwrap()).unwrap();
+            assert!(serde_json::from_slice::<Value>(&bytes).is_ok(), "an auto-appended OBJ suffix must not select OBJ export");
+        }
         assert!(crate::execute(&mut s, "file.exportMesh", &json!({ "path": base, "format": "fbx" })).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

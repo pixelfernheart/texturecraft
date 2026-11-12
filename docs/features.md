@@ -18,8 +18,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   stencil), polygon fill (triangle, UV island or the whole mesh), **path** and **lasso fill**, a
   **particle brush**, **smudge**, **clone** (V + click sets the source), color picker, Shift+click
   straight lines, and painting directly in the **2D UV view**.
-- **Geometry decals:** drop an image on the surface, then move, scale and turn its frame; it stays
-  an editable fill layer.
+- **Geometry decals:** drag an image onto the surface, then move its frame, scale both dimensions
+  from a corner, or resize one dimension from an edge handle. Rotate from the round handle; choose
+  Stretch, Contain or Cover to control how the image fits. Decals remain editable fill layers.
 - **Text** in any installed font (or the built-in ones), shaped for every script with kerning and
   ligatures, one or more lines: stamp it with the brush as its alpha, or place it as a decal in the
   tool's base color (Properties › Alpha › Text).
@@ -53,7 +54,9 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   grain, bricks, fabric weave, twill, leather grain, marble veins, Voronoi, paint chips…) or your own
   **images**, through UV, tri-planar, planar, spherical, cylindrical or decal projection, with
   the UV scale, rotation and offset, the tri-planar blend sharpness and offset, the planar axis
-  and offset, and the cylindrical axis in the fill's properties. Each channel takes its own image (a normal, roughness or height map, say): pick it in the channel's
+  and offset, and the cylindrical axis in the fill's properties. Clicking an image in Assets adds
+  it as an image fill; edit its Stretch, Contain or Cover fit and drag its frame in the 2D UV view
+  to move, rotate or resize it by a corner or edge. Each channel takes its own image (a normal, roughness or height map, say): pick it in the channel's
   source menu, which also imports one, or drop it from the Assets panel onto the channel. A
   normal map image made for DirectX (Y down) is marked with **DirectX normal map** under it.
   Alt+click a material channel (of a fill or the brush) to keep that channel alone.
@@ -103,8 +106,6 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   edited): drop one from the Assets panel on a slot of the Texture Set Settings, or pick it from
   the slot's menu. A UV-tiled set takes one image per tile, named with its tile number
   (`ao.1001.png`, `ao.1002.png`…): drop or pick any one of them.
-- **Live bake preview:** while the app bakes, each mesh map shows on the model as soon as it is
-  finished; the bake bar follows the newest map, pins a finished one or shows the material.
 - **Export presets** for glTF PBR Metal Roughness, Unreal Engine (packed), Unity HDRP (mask map),
   Unity Standard, Blender (Principled BSDF), Godot 4 (ORM), OpenPBR (with the coat, fuzz,
   anisotropy, transmission and subsurface maps), separate maps, mesh maps and document channels, in
@@ -114,7 +115,8 @@ Everything TextureCraft does today, by area. What's still missing is in [`ROADMA
   and share them as JSON.
 - **Mesh export** to OBJ with an MTL material library and its maps (PBR extension keys for
   roughness, metallic, normal and coat; UV-tiled sets keep their UDIM UVs and export their maps
-  through Export textures), textured GLB (with clear coat and sheen) and USD (with clear coat).
+  through Export textures), textured glTF JSON and GLB (with clear coat and sheen) and USD (with
+  clear coat).
 
 ## The viewport
 

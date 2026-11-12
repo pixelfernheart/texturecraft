@@ -71,7 +71,7 @@ fn effect_json(session: &Session, effect: &Effect, content: bool) -> Value {
 
 /// A generator's settings, with its curvature mode and detail size weights when it has them.
 fn generator_json(generator: &Generator) -> Value {
-    let mut out = json!({ "type": format!("{:?}", generator.kind), "level": generator.level, "softness": generator.softness, "noise": generator.noise_amount, "offset": generator.offset, "invert": generator.invert });
+    let mut out = json!({ "type": format!("{:?}", generator.kind), "level": generator.level, "softness": generator.softness, "noise": generator.noise_amount, "invert": generator.invert });
     if let Some(detail) = &generator.detail {
         out["mode"] = json!(format!("{:?}", detail.mode));
         out["sizes"] = json!(detail.weights);
@@ -187,7 +187,6 @@ pub fn session(s: &Session) -> Value {
         "layers": stack(s, ts),
         "tool": { "tool": s.tool.tool.id(), "brush": crate::tool_cmds::brush_json(s) },
         "view": s.view.label(),
-        "bakePreview": crate::bake_preview::preview_json(s),
         "camera": crate::view_cmds::camera_json(s),
         "display": s.doc.project.display,
         "history": { "undo": s.undo_label(), "redo": s.redo_label(), "depth": s.history_labels().len() },

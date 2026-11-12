@@ -7,8 +7,8 @@
 //!   [`texturecraft_geom::Mesh`] (world space in meters, Y up, glTF UV convention, one submesh
 //!   per material), with an automatic unwrap ([`texturecraft_geom::unwrap::auto_unwrap`]) when
 //!   the file has no UVs and a [`MeshReport`].
-//! - [`mesh_export`]: the working mesh as OBJ, as GLB with its textures embedded, or as USD
-//!   (usda / usdc with textures alongside, usdz with them packaged).
+//! - [`mesh_export`]: the working mesh as OBJ, as glTF JSON or GLB with its textures embedded,
+//!   or as USD (usda / usdc with textures alongside, usdz with them packaged).
 //! - [`export`]: texture export from a texture set's composite through [`ExportPreset`]s (file
 //!   name templates, channel packing, virtual maps such as the final normal, padding, resizing)
 //!   to PNG, JPEG, TGA, TIFF, BMP, WebP, EXR and HDR bytes.
@@ -42,24 +42,21 @@ pub use export::{
     Dest, ExportInput, ExportOptions, ExportPreset, ExportedFile, FileFormat, MapSpec, Padding, PlannedFile, SourceRef, VirtualMap, list_outputs, render_maps,
 };
 pub use image_res::{DecodedImage, coverage_png, decode_image, decode_image_within};
-pub use mesh_export::{GlbTextures, NamedFiles, UsdExport, UsdFormat, glb_bytes, glb_export_options, obj_bytes, obj_with_mtl, usd_bytes, usd_export_options};
+pub use mesh_export::{
+    GlbTextures, NamedFiles, UsdExport, UsdFormat, glb_bytes, glb_export_options, gltf_bytes, obj_bytes, obj_with_mtl, usd_bytes, usd_export_options,
+};
 pub use mesh_import::{HighPolyMesh, ImportedMesh, MeshFile, MeshReport, import_high_poly_bytes, import_mesh_bytes, mesh_report, self_contained_mesh};
 #[cfg(not(target_arch = "wasm32"))]
 pub use presets::load_preset;
 pub use presets::{builtin_preset, builtin_presets, preset_from_json, preset_to_json};
-pub use project_file::{
-    BakePaintData, DEFAULT_PROJECT_OPEN_LIMIT_GIB, ProjectFile, load_project_bytes, project_open_limit_gib, sanitize_resource_name, save_project_bytes,
-    set_project_open_limit_gib,
-};
+pub use project_file::{BakePaintData, ProjectFile, load_project_bytes, sanitize_resource_name, save_project_bytes};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use export::write_files;
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_import::{import_mesh, read_mesh_file};
 #[cfg(not(target_arch = "wasm32"))]
-pub use project_file::{
-    DEFAULT_RAM_PERCENT, DEFAULT_RESERVED_CORES, available_save_resources, load_project, save_project, save_ram_budget, set_save_resources,
-};
+pub use project_file::{load_project, save_project};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {

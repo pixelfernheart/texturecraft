@@ -59,8 +59,7 @@ fn setup() -> Option<(Headless, Frame)> {
     let mut cam = OrbitCamera { yaw: 0.6, pitch: 0.25, ..OrbitCamera::default() };
     let (lo, hi) = mesh.bounds();
     cam.frame(lo, hi);
-    let frame =
-        Frame { view_id: 1, size: [480, 360], kind: ViewKind::Scene, camera: cam, shade: Shade::default(), visible: vec![true, true], overlay: Vec::new() };
+    let frame = Frame { view_id: 1, size: [480, 360], kind: ViewKind::Scene, camera: cam, shade: Shade::default(), visible: vec![true, true] };
     Some((h, frame))
 }
 

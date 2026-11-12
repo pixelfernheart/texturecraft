@@ -16,7 +16,7 @@ use crate::i18n::{tr, trf};
 use crate::new_project_advanced::COMBO_WIDTH;
 use crate::state::Mode;
 use crate::theme::{Accent, Brightness, Tokens, caption};
-use crate::widgets::{color_swatch, combo, icon_button, primary_button, section, slider};
+use crate::widgets::{color_swatch, combo, icon_button, primary_button, slider, slider_edit};
 
 pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     start(app, ctx);
@@ -25,6 +25,8 @@ pub fn show(app: &mut TextureCraftApp, ctx: &egui::Context) {
     settings(app, ctx);
     crate::keymap::window(app, ctx);
     crate::windows::export(app, ctx);
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::mesh_export_dialog::show(app, ctx);
     #[cfg(target_arch = "wasm32")]
     export_mesh(app, ctx);
     unsaved(app, ctx);
@@ -196,14 +198,10 @@ pub(crate) fn display(app: &mut TextureCraftApp, ui: &mut Ui) {
     if ui.checkbox(&mut ortho, tr("Orthographic")).changed() {
         app.run("camera.set", json!({"ortho": ortho}));
     }
-    let tone_mapping_name = |tone_mapping: ToneMapping| match tone_mapping {
-        ToneMapping::Linear => tr("Linear"),
-        ToneMapping::AcesFilmic => tr("ACES filmic"),
-    };
-    combo(ui, tr("Tone mapping"), tone_mapping_name(d.tone_mapping), |ui| {
-        for tone_mapping in [ToneMapping::Linear, ToneMapping::AcesFilmic] {
-            ui.selectable_value(&mut d.tone_mapping, tone_mapping, tone_mapping_name(tone_mapping));
-        }
+    ui.horizontal(|ui| {
+        ui.label(tr("Tone mapping"));
+        ui.selectable_value(&mut d.tone_mapping, ToneMapping::Linear, tr("Linear"));
+        ui.selectable_value(&mut d.tone_mapping, ToneMapping::AcesFilmic, tr("ACES filmic"));
     });
     cameras(app, ui);
     ui.add_space(6.0);
@@ -221,6 +219,7 @@ pub(crate) fn display(app: &mut TextureCraftApp, ui: &mut Ui) {
     });
     ui.add_space(6.0);
     ui.label(caption(tr("Viewer settings")));
+    slider(ui, tr("Ambient occlusion intensity"), &mut d.ao_intensity, 0.0..=1.0, 2);
     ui.checkbox(&mut app.ui.wireframe_3d, tr("Show wireframe in the 3D view"));
     ui.checkbox(&mut app.ui.uv_wireframe, tr("Show UV wireframe in the 2D view"));
     ui.checkbox(&mut d.taa, tr("Temporal anti-aliasing (refines the 3D view while it is still)"));
@@ -268,23 +267,18 @@ fn cameras(app: &mut TextureCraftApp, ui: &mut Ui) {
     }
 }
 
-/// Wide enough for the longer shader model name
-const SHADER_MODEL_COMBO_WIDTH: f32 = 260.0;
-
-/// Width of the scatter color swatch
-const SCATTER_SWATCH_WIDTH: f32 = 44.0;
-
-/// Index of refraction slider range: air to well past diamond (2.42)
-const INDEX_OF_REFRACTION_RANGE: std::ops::RangeInclusive<f32> = 1.0..=3.0;
-
-/// The Shader Settings panel body (a dock tab)
+/// The Shader Settings panel body (a dock tab).
 pub(crate) fn shader(app: &mut TextureCraftApp, ui: &mut Ui) {
-    let tokens = Tokens::get(ui.ctx());
-    let mut display = app.session.doc.project.display.clone();
-    let before = display.clone();
-
-    let model_name = |spec_gloss: bool| if spec_gloss { tr("TextureCraft PBR - Specular Glossiness") } else { tr("TextureCraft PBR - Metallic Roughness") };
-    let channels = if display.spec_gloss {
+    let tk = Tokens::get(ui.ctx());
+    let mut d = app.session.doc.project.display.clone();
+    let before = d.clone();
+    let model = |sg: bool| if sg { tr("TextureCraft PBR - Specular Glossiness") } else { tr("TextureCraft PBR - Metallic Roughness") };
+    egui::ComboBox::from_id_salt("shader_model").width(260.0).selected_text(model(d.spec_gloss)).show_ui(ui, |ui| {
+        for sg in [false, true] {
+            ui.selectable_value(&mut d.spec_gloss, sg, model(sg));
+        }
+    });
+    let channels = if d.spec_gloss {
         tr("Base color is the diffuse color, Specular the F0 color and Glossiness 1 - roughness (add these channels in the texture set settings).")
     } else {
         tr("Base color, Metallic, Roughness and Specular level.")
@@ -295,101 +289,80 @@ pub(crate) fn shader(app: &mut TextureCraftApp, ui: &mut Ui) {
     let optional = tr(
         "Optional channels add a clear coat (Coat weight, Coat roughness, Coat normal), sheen (Sheen weight, color, roughness), anisotropy (Anisotropy level, angle), subsurface scattering (Scattering weight) and transmission (Transmission).",
     );
-
-    egui::ComboBox::from_id_salt("shader_model")
-        .width(SHADER_MODEL_COMBO_WIDTH)
-        .selected_text(model_name(display.spec_gloss))
-        .show_ui(ui, |ui| {
-            for spec_gloss in [false, true] {
-                ui.selectable_value(&mut display.spec_gloss, spec_gloss, model_name(spec_gloss));
-            }
-        })
-        .response
-        .on_hover_text(format!("{model_text} {channels} {optional}"));
+    ui.label(RichText::new(format!("{model_text} {channels} {optional}")).color(tk.text_dim));
     ui.add_space(6.0);
-
-    ui.checkbox(&mut display.parallax, tr("Parallax occlusion (height channel)"))
+    ui.checkbox(&mut d.parallax, tr("Parallax occlusion (height channel)"))
         .on_hover_text(tr("Offsets the textures by the height channel, at the height to normal strength"));
-    ui.checkbox(&mut display.displacement, tr("Displacement (height channel)")).on_hover_text(tr(
+    ui.checkbox(&mut d.displacement, tr("Displacement (height channel)")).on_hover_text(tr(
         "Moves the surface by the height channel on a finer copy of the mesh, at the height to normal strength (viewport only: painting follows the base surface)",
     ));
-    slider(ui, tr("AO intensity"), &mut display.ao_intensity, 0.0..=1.0, 2);
     ui.add_space(6.0);
-
-    section(ui, "shader_subsurface", tr("Subsurface scattering"), true, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr("Scatter color")).color(tokens.text));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                color_swatch(ui, "shader_scatter_color", &mut display.scatter_color, SCATTER_SWATCH_WIDTH)
-            })
-        })
-        .response
-        .on_hover_text(tr("Color of the light that travels under the surface (each channel goes as far as its value)"));
-        slider(ui, tr("Scatter radius"), &mut display.scatter_radius, 0.0..=1.0, 3)
-            .on_hover_text(tr("How far light travels under the surface, as a fraction of the mesh size (where the Scattering weight channel is painted)"));
-    });
-    section(ui, "shader_transmission", tr("Transmission"), true, |ui| {
-        slider(ui, tr("Index of refraction"), &mut display.ior, INDEX_OF_REFRACTION_RANGE, 2).on_hover_text(tr(
-            "How strongly transmissive surfaces bend light (where the Transmission channel is painted): water 1.33, glass 1.5, diamond 2.42",
-        ));
-    });
-
-    if display != before {
-        app.session.doc.project.display = display;
+    ui.label(caption(tr("Subsurface scattering")));
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(tr("Scatter color")).color(tk.text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| color_swatch(ui, "shader_scatter_color", &mut d.scatter_color, 44.0))
+    })
+    .response
+    .on_hover_text(tr("Color of the light that travels under the surface (each channel goes as far as its value)"));
+    slider(ui, tr("Scatter radius"), &mut d.scatter_radius, 0.0..=1.0, 3)
+        .on_hover_text(tr("How far light travels under the surface, as a fraction of the mesh size (where the Scattering weight channel is painted)"));
+    ui.add_space(6.0);
+    ui.label(caption(tr("Transmission")));
+    slider(ui, tr("Index of refraction"), &mut d.ior, 1.0..=3.0, 2)
+        .on_hover_text(tr("How strongly transmissive surfaces bend light (where the Transmission channel is painted): water 1.33, glass 1.5, diamond 2.42"));
+    if d != before {
+        app.session.doc.project.display = d;
+    }
+    let ts = app.session.ts();
+    if let Some(set) = app.session.doc.project.texture_sets.get(ts) {
+        let mut hs = set.height_strength;
+        if let Some(merge) = slider_edit(ui, tr("Height to normal strength"), &mut hs, 0.0..=10.0, 2) {
+            app.run("textureSet.settings", json!({"ts": ts, "heightStrength": hs, "merge": merge}));
+        }
+    }
+    let mut ao = app.session.doc.project.display.ao_intensity;
+    if slider(ui, tr("AO intensity"), &mut ao, 0.0..=1.0, 2).changed() {
+        app.session.doc.project.display.ao_intensity = ao;
     }
 }
 
-/// The History panel body (a dock tab)
+/// The History panel body (a dock tab).
 pub(crate) fn history(app: &mut TextureCraftApp, ui: &mut Ui) {
-    let tokens = Tokens::get(ui.ctx());
+    let tk = Tokens::get(ui.ctx());
     let (done, undone) = (app.session.history_labels(), app.session.redo_labels());
-    // A click on a step goes back (or forward) to it: steps to undo, or to redo when negative
+    // A click on a step goes back (or forward) to it: steps to undo, or to redo when negative.
     let mut jump = 0i64;
-
-    // Bottom up: the Undo and Redo row keeps its place under a list that fills the rest of the panel
-    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-        ui.horizontal(|ui| {
-            if ui.add_enabled(app.session.can_undo(), egui::Button::new(format!("{} {}", ic::ARROW_COUNTER_CLOCKWISE, tr("Undo")))).clicked() {
-                app.run("edit.undo", json!({}));
+    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+        let n = done.len() as i64;
+        let rows = std::iter::once(RichText::new(tr("Project opened")).color(tk.text_dim))
+            .chain(done.iter().map(RichText::new))
+            .chain(undone.iter().map(|l| RichText::new(trf("{action} (undone)", &[("action", l)])).color(tk.text_dim)));
+        for (i, text) in rows.enumerate() {
+            // Row i is the state after i steps.
+            let steps = n - i as i64;
+            if ui.selectable_label(steps == 0, text).on_hover_text(tr("Return to this step")).clicked() {
+                jump = steps;
             }
-            if ui.add_enabled(app.session.can_redo(), egui::Button::new(format!("{} {}", ic::ARROW_CLOCKWISE, tr("Redo")))).clicked() {
-                app.run("edit.redo", json!({}));
-            }
-        });
-
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                let done_count = done.len() as i64;
-                let rows = std::iter::once(RichText::new(tr("Project opened")).color(tokens.text_dim))
-                    .chain(done.iter().map(RichText::new))
-                    .chain(undone.iter().map(|label| RichText::new(trf("{action} (undone)", &[("action", label)])).color(tokens.text_dim)));
-                for (row, text) in rows.enumerate() {
-                    // Each row is the state after that many steps
-                    let steps = done_count - row as i64;
-                    if ui.selectable_label(steps == 0, text).on_hover_text(tr("Return to this step")).clicked() {
-                        // Point history is consumed before the document rows shown here
-                        jump = if steps >= 0 {
-                            app.session.history_undo_steps(steps as usize) as i64
-                        } else {
-                            -(app.session.history_redo_steps((-steps) as usize) as i64)
-                        };
-                    }
-                }
-            });
-        });
+        }
     });
-
     if jump > 0 {
         app.run("edit.undo", json!({ "steps": jump }));
     } else if jump < 0 {
         app.run("edit.redo", json!({ "steps": -jump }));
     }
+    ui.horizontal(|ui| {
+        if ui.add_enabled(app.session.can_undo(), egui::Button::new(format!("{} {}", ic::ARROW_COUNTER_CLOCKWISE, tr("Undo")))).clicked() {
+            app.run("edit.undo", json!({}));
+        }
+        if ui.add_enabled(app.session.can_redo(), egui::Button::new(format!("{} {}", ic::ARROW_CLOCKWISE, tr("Redo")))).clicked() {
+            app.run("edit.redo", json!({}));
+        }
+    });
 }
 
 /// What the start window was asked for.
 enum Start {
     Menu(&'static str),
-    #[cfg(not(target_arch = "wasm32"))]
     Recent(String),
     Close,
 }
@@ -399,9 +372,7 @@ fn start(app: &mut TextureCraftApp, ctx: &egui::Context) {
     if !app.ui.windows.start {
         return;
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let tokens = Tokens::get(ctx);
+    let tk = Tokens::get(ctx);
     let mut open = true;
     let mut action = None;
     dialog("start", "TextureCraft", &mut open).min_width(380.0).show(ctx, |ui| {
@@ -413,12 +384,11 @@ fn start(app: &mut TextureCraftApp, ctx: &egui::Context) {
                 action = Some(Start::Menu("file.open"));
             }
         });
-        #[cfg(not(target_arch = "wasm32"))]
         if file_dialogs_available() {
             ui.add_space(8.0);
             ui.label(caption(tr("Recent projects")));
             if app.ui.recent.is_empty() {
-                ui.label(RichText::new(tr("No recent projects yet")).color(tokens.text_dim));
+                ui.label(RichText::new(tr("No recent projects yet")).color(tk.text_dim));
             }
             for path in &app.ui.recent {
                 let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
@@ -442,17 +412,15 @@ fn start(app: &mut TextureCraftApp, ctx: &egui::Context) {
             });
         });
     });
-
-    if let Some(action) = action {
+    if let Some(a) = action {
         app.ui.windows.start = false;
-        match action {
+        match a {
             Start::Menu(id) => crate::menus::invoke(app, ctx, id),
             #[cfg(not(target_arch = "wasm32"))]
             Start::Recent(path) => open_path(app, &path),
-            Start::Close => {}
+            _ => {}
         }
     }
-
     if !open {
         app.ui.windows.start = false;
     }
@@ -576,25 +544,6 @@ fn new_project(app: &mut TextureCraftApp, ctx: &egui::Context) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn settings_resources(ctx: &egui::Context) -> (u32, u64) {
-    let id = egui::Id::unique("settings_resources");
-    let now = ctx.input(|input| input.time);
-    ctx.request_repaint_after(std::time::Duration::from_secs(1));
-
-    // Query the operating system once a second while Settings is open, rather than every frame
-    if let Some((sampled_at, cores, available_ram_bytes)) = ctx.data(|data| data.get_temp::<(f64, u32, u64)>(id))
-        && (0.0..1.0).contains(&(now - sampled_at))
-    {
-        return (cores, available_ram_bytes);
-    }
-
-    let (cores, available_ram_bytes) = texturecraft_engine::formats::available_save_resources();
-    let cores = u32::try_from(cores).unwrap_or(u32::MAX);
-    ctx.data_mut(|data| data.insert_temp(id, (now, cores, available_ram_bytes)));
-    (cores, available_ram_bytes)
-}
-
 fn settings(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let tk = Tokens::get(ctx);
     let mut open = app.ui.windows.settings;
@@ -611,7 +560,7 @@ fn settings(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.label(tr("Language"));
             let current = crate::i18n::current();
             egui::ComboBox::from_id_salt("language").width(180.0).height(320.0).selected_text(current.name).show_ui(ui, |ui| {
-                for (l, ok) in LANGUAGES.iter().zip(drawable).filter(|(l, _)| crate::i18n::available(l.code)) {
+                for (l, ok) in LANGUAGES.iter().zip(drawable) {
                     let item = egui::Button::selectable(l.code == current.code, if ok { l.name } else { l.english });
                     if ui.add_enabled(ok, item).on_disabled_hover_text(tr("No font on this system can show this language")).clicked() {
                         p.language = l.code.to_owned();
@@ -676,40 +625,14 @@ fn settings(app: &mut TextureCraftApp, ctx: &egui::Context) {
             ui.end_row();
         });
         ui.add_space(8.0);
-        ui.label(caption(tr("Project")));
         #[cfg(not(target_arch = "wasm32"))]
-        let (available_cores, available_ram_bytes) = settings_resources(ctx);
-        form("settings_project").show(ui, |ui| {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
+        {
+            ui.label(caption(tr("Project")));
+            form("settings_project").show(ui, |ui| {
                 ui.label(tr("Autosave every"));
                 ui.add(egui::DragValue::new(&mut p.autosave_minutes).range(0..=120).suffix(format!(" {}", tr("min"))));
                 ui.end_row();
-                let label = ui.label(tr("Cores kept for the UI"));
-                ui.add(egui::DragValue::new(&mut p.reserved_cores).range(0..=available_cores)).labelled_by(label.id);
-                ui.end_row();
-            }
-
-            let label = ui.label(tr("Max project size on open"));
-            ui.add(egui::DragValue::new(&mut p.project_open_limit_gib).range(1..=u32::MAX).suffix(" GiB"))
-                .labelled_by(label.id)
-                .on_hover_text(tr("Maximum decompressed project data. Increase this limit to open larger projects."));
-            ui.end_row();
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let label = ui.label(tr("Max RAM while saving"));
-                ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(&mut p.save_ram_percent).range(1..=100).suffix(" %")).labelled_by(label.id);
-                    let budget_bytes = texturecraft_engine::formats::save_ram_budget(available_ram_bytes, p.save_ram_percent);
-                    ui.label(format!("≈ {:.2} GiB", budget_bytes as f64 / (1_u64 << 30) as f64));
-                });
-                ui.end_row();
-            }
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            ui.label(RichText::new(tr("Saving uses the other cores and at most this share of the free RAM. At least one core always works.")).small().color(tk.text_dim));
+            });
             ui.label(
                 RichText::new(trf("0 turns autosave off. Copies go to {folder}", &[("folder", &crate::user_dir("autosave").display())]))
                     .small()
@@ -762,6 +685,7 @@ fn settings(app: &mut TextureCraftApp, ctx: &egui::Context) {
 #[cfg(target_arch = "wasm32")]
 fn export_mesh(app: &mut TextureCraftApp, ctx: &egui::Context) {
     let formats = [
+        ("gltf", "glTF JSON (.gltf)", tr("Textures embedded as data URIs")),
         ("glb", "glTF binary (.glb)", tr("Textures embedded; for game engines and most viewers")),
         ("usdz", "USDZ (.usdz)", tr("Textures packaged; for USD tools and AR Quick Look")),
         ("obj", "Wavefront OBJ (.obj)", tr("Geometry and UVs only")),
@@ -808,11 +732,11 @@ fn about(app: &mut TextureCraftApp, ctx: &egui::Context) {
     app.ui.windows.about = open;
 }
 
-/// The Log panel body (a dock tab)
+/// The Log panel body (a dock tab).
 pub(crate) fn log(app: &mut TextureCraftApp, ui: &mut Ui) {
-    egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-        for line in &app.session.log {
-            ui.label(RichText::new(line).monospace());
+    egui::ScrollArea::vertical().max_height(300.0).stick_to_bottom(true).show(ui, |ui| {
+        for l in &app.session.log {
+            ui.label(RichText::new(l).monospace());
         }
     });
 }
@@ -945,22 +869,7 @@ pub fn file_action(app: &mut TextureCraftApp, _ctx: &egui::Context, id: &str) ->
             true
         }
         "file.exportMesh" => {
-            let name = format!("{}.obj", texturecraft_engine::formats::export::sanitize_file_stem(&app.session.doc.project.name));
-            let dialog = FileDialog::save()
-                .filter(tr("Wavefront OBJ with MTL, textures alongside"), &["obj"])
-                .filter(tr("glTF binary with textures"), &["glb"])
-                .filter(tr("USDZ with textures"), &["usdz"])
-                .filter(tr("USD text, textures alongside"), &["usda"])
-                .filter(tr("USD binary, textures alongside"), &["usdc"])
-                .file_name(name);
-            app.ask_file(dialog, Bound::Project, |app, paths| {
-                if let Some(p) = paths.first()
-                    && let Some(r) = app.run("file.exportMesh", json!({"path": p.display().to_string()}))
-                {
-                    let p = r.get("path").and_then(|p| p.as_str()).unwrap_or_default().to_string();
-                    app.toast(trf("Exported mesh to {path}", &[("path", &p)]), false);
-                }
-            });
+            crate::mesh_export_dialog::open(app);
             true
         }
         "file.reimportMesh" => {
@@ -1303,8 +1212,6 @@ mod tests {
     fn harness() -> Harness<'static, TextureCraftApp> {
         let session = texturecraft_engine::sample_session(256, 64).unwrap();
         let mut h = Harness::builder().with_size(vec2(1600.0, 960.0)).build_eframe(|cc| TextureCraftApp::new(cc, session));
-        // These dialog tests query English labels, independently of the system locale.
-        h.state_mut().ui.prefs.language = "en".into();
         h.run_steps(2);
         h
     }

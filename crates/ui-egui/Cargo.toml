@@ -14,7 +14,6 @@ texturecraft-render = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "persistence"] }
 egui = { workspace = true }
 craft-ui = { workspace = true }
-craft-i18n = { workspace = true }
 craft-window = { workspace = true }
 craft-keymap = { workspace = true }
 craft-quit = { workspace = true }
@@ -40,7 +39,6 @@ craft-dialogs = { workspace = true }
 # build.rs: the interface faces lose their Private Use Area, where the icon font draws (the
 # versions craft-libs' craft-fonts-build subsets with).
 [build-dependencies]
-craft-i18n = { workspace = true }
 skera = "0.8"
 skrifa = { version = "0.48", default-features = false, features = ["std"] }
 
@@ -57,6 +55,4 @@ web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "H
 eframe = { workspace = true, features = ["x11"] }
 # Offscreen pictures of the whole window (tests/ui_snapshots.rs).
 egui_kittest = { version = "0.37", features = ["wgpu", "eframe"] }
-# Fallible setup of the exact GPU device used by rendering regression tests.
-pollster = "0.4"
 image = { workspace = true }
