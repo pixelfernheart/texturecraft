@@ -1,0 +1,39 @@
+*~
+plan/
+/target
+target/
+/dist
+/corpus
+/log
+/secrets
+/temp
+/craft-fonts
+*.tcraft.tmp
+
+# Rust build output
+/target/
+
+# Packaging output
+/dist/
+/build/
+
+# AppImage files
+*.AppImage
+*.AppImage.zsync
+
+# Debian packages
+*.deb
+*.rpm
+
+# Temporary files
+*.tmp
+*.log
+*~
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
