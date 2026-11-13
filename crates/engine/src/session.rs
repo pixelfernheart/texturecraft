@@ -341,6 +341,8 @@ pub struct Session {
     pub target: StackTarget,
     pub camera: OrbitCamera,
     pub view: ViewMode,
+    /// The live bake preview while the app bakes.
+    pub bake_preview: Option<crate::bake_preview::BakePreview>,
     /// Viewport size (pixels) used by scripted strokes.
     pub viewport: Vec2,
     pub(crate) stroke: Option<ActiveStroke>,
@@ -403,6 +405,7 @@ impl Session {
             target: StackTarget::Content,
             camera,
             view: ViewMode::Material,
+            bake_preview: None,
             viewport: Vec2::new(1280.0, 800.0),
             stroke: None,
             clipboard: None,
@@ -676,6 +679,10 @@ impl Session {
             let p = &other.project;
             let content = p.effect(e).and_then(|(owner, _)| p.layers.get(&owner)).is_some_and(|l| l.content_effects.iter().any(|x| x.id == e));
             self.target = if content { StackTarget::Content } else { StackTarget::Mask };
+        }
+        let has_mask = self.selected_layer().and_then(|lid| self.doc.project.layer(self.doc.project.mask_owner(lid)).ok()).is_some_and(|l| l.mask.is_some());
+        if self.target == StackTarget::Mask && !has_mask {
+            self.target = StackTarget::Content;
         }
     }
 

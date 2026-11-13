@@ -26,11 +26,12 @@ pub(crate) fn scene_overlay(app: &TextureCraftApp, _ui: &Ui, _rect: Rect) -> Vec
         return Vec::new();
     }
 
-    let (lo, hi) = app.session.mesh.bounds();
-    let center = (lo + hi) * 0.5;
-    let margin = (hi - lo) * 0.05;
-    let (lo, hi) = (lo - margin, hi + margin);
     let symmetry = app.session.tool.brush.symmetry;
+    let (mesh_lo, mesh_hi) = app.session.mesh.bounds();
+    let mesh_center = (mesh_lo + mesh_hi) * 0.5;
+    let center = symmetry.origin(mesh_center);
+    let margin = (mesh_hi - mesh_lo) * 0.05;
+    let (lo, hi) = (mesh_lo - mesh_center - margin, mesh_hi - mesh_center + margin);
     let mut quads: Vec<_> = [symmetry.x, symmetry.y, symmetry.z]
         .into_iter()
         .enumerate()
@@ -42,8 +43,8 @@ pub(crate) fn scene_overlay(app: &TextureCraftApp, _ui: &Ui, _rect: Rect) -> Vec
             let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
             let corner = |at_u: f32, at_v: f32| {
                 let mut point = center;
-                point[u] = at_u;
-                point[v] = at_v;
+                point[u] += at_u;
+                point[v] += at_v;
                 point
             };
             Some(OverlayQuad {
@@ -54,11 +55,12 @@ pub(crate) fn scene_overlay(app: &TextureCraftApp, _ui: &Ui, _rect: Rect) -> Vec
         })
         .collect();
 
-    if symmetry.radial > 1 {
-        let axis = [Vec3::X, Vec3::Y, Vec3::Z].get(symmetry.axis as usize).copied().unwrap_or(Vec3::Y);
+    if symmetry.radial_mode() {
+        let axis = symmetry.radial_axis();
         let camera_right = app.session.camera.view().inverse().transform_vector3(Vec3::X).normalize_or_zero();
-        let side = axis.cross(camera_right).try_normalize().unwrap_or_else(|| axis.any_orthonormal_vector()) * (hi - lo).length() * 0.001;
-        let reach = (hi - lo).length() * 0.5;
+        let diagonal = (mesh_hi - mesh_lo).length();
+        let side = axis.cross(camera_right).try_normalize().unwrap_or_else(|| axis.any_orthonormal_vector()) * diagonal * 0.001;
+        let reach = diagonal * 0.5;
         quads.push(OverlayQuad {
             corners: [center - axis * reach - side, center + axis * reach - side, center + axis * reach + side, center - axis * reach + side],
             color: COLOR,
@@ -87,8 +89,9 @@ pub(crate) fn overlay(app: &TextureCraftApp, ui: &Ui, rect: Rect, cursor: Option
 
     if let Some((position, normal)) = cursor {
         let (lo, hi) = app.session.mesh.bounds();
-        let origin = (lo + hi) * 0.5;
-        for transform in app.session.tool.brush.symmetry.transforms().iter().skip(1) {
+        let symmetry = app.session.tool.brush.symmetry;
+        let origin = symmetry.origin((lo + hi) * 0.5);
+        for transform in symmetry.transforms().iter().skip(1) {
             let copy = origin + *transform * (position - origin);
             if visible(app, rect, copy) {
                 crate::viewport::brush_cursor(app, ui, rect, copy, (*transform * normal).normalize_or_zero());

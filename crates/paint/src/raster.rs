@@ -82,6 +82,21 @@ impl StrokeCanvas {
     }
 }
 
+const NEIGHBOUR_REACH: f32 = 1.5;
+const MIN_FACING: f32 = 0.05;
+const NDC_HEIGHT: f32 = 2.0;
+
+fn grazing_allowance(depth: &EyeDepth, point: Vec3, facing: f32, pixels_per_unit: f32) -> f32 {
+    if facing <= 0.0 {
+        return 0.0;
+    }
+
+    let clip_w = (depth.view_proj * point.extend(1.0)).w.max(0.0);
+    let world_per_pixel = clip_w * NDC_HEIGHT / pixels_per_unit;
+    let facing = facing.clamp(MIN_FACING, 1.0);
+    world_per_pixel * NEIGHBOUR_REACH * (1.0 - facing * facing).sqrt() / facing
+}
+
 /// What the rasterizer reads.
 pub struct RasterCtx<'a> {
     pub mesh: &'a Mesh,
@@ -108,6 +123,10 @@ pub fn rasterize(canvas: &mut StrokeCanvas, ctx: &RasterCtx, stamps: &[Stamp]) {
     canvas.fit(ctx.gbuf);
     let fade_lo = ctx.angle_fade.1.to_radians().cos();
     let fade_hi = ctx.angle_fade.0.to_radians().cos();
+    let pixels_per_unit = ctx.depth.map_or(1.0, |depth| {
+        let ndc_per_unit = depth.view_proj.row(1).truncate().length();
+        (depth.height as f32 * ndc_per_unit).max(f32::EPSILON)
+    });
     let mut tris = Vec::new();
     for s in stamps {
         if s.radius.is_nan() || s.radius <= 0.0 || !s.center.is_finite() {
@@ -118,7 +137,7 @@ pub fn rasterize(canvas: &mut StrokeCanvas, ctx: &RasterCtx, stamps: &[Stamp]) {
         ctx.bvh.query_box(s.center - ext, s.center + ext, |t| tris.push(t));
         // Each texel belongs to one triangle, so triangles scan independently (in parallel for
         // large stamps); stamp alphas combine commutatively, so the order does not matter.
-        let scan = |&t: &u32| scan_triangle(ctx, s, t, w, h, fade_lo, fade_hi);
+        let scan = |&t: &u32| scan_triangle(ctx, s, t, w, h, fade_lo, fade_hi, pixels_per_unit);
         let parts: Vec<TriTexels> = if tris.len() > 16 { tris.par_iter().filter_map(scan).collect() } else { tris.iter().filter_map(scan).collect() };
         // The stamp center in texels: the footprint texel nearest to it on the surface.
         let mut center = ([0.0f32; 2], f32::MAX);
@@ -136,7 +155,7 @@ pub fn rasterize(canvas: &mut StrokeCanvas, ctx: &RasterCtx, stamps: &[Stamp]) {
 type TriTexels = (Vec<(u32, u32, f32)>, ([f32; 2], f32));
 
 #[allow(clippy::too_many_arguments)]
-fn scan_triangle(ctx: &RasterCtx, s: &Stamp, t: u32, w: u32, h: u32, fade_lo: f32, fade_hi: f32) -> Option<TriTexels> {
+fn scan_triangle(ctx: &RasterCtx, s: &Stamp, t: u32, w: u32, h: u32, fade_lo: f32, fade_hi: f32, pixels_per_unit: f32) -> Option<TriTexels> {
     if ctx.mesh.material_of(t as usize) != Some(ctx.material) {
         return None;
     }
@@ -188,7 +207,7 @@ fn scan_triangle(ctx: &RasterCtx, s: &Stamp, t: u32, w: u32, h: u32, fade_lo: f3
                 continue;
             }
             if let Some(depth) = ctx.depth.filter(|_| !s.copy)
-                && !depth.visible(p)
+                && !depth.visible(p + to_eye * grazing_allowance(depth, p, facing, pixels_per_unit))
             {
                 continue;
             }

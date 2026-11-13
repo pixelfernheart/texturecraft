@@ -26,6 +26,17 @@ pub fn mesh_map_rgba(baked: Option<&BakedMaps>, m: BakedMap, size: u32, working_
     out
 }
 
+pub fn neutral_rgba(m: BakedMap, size: u32) -> Vec<u8> {
+    let value = m.neutral();
+    let pixel = [0, 1, 2].map(|k| (value[k].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+    let size = size.max(1);
+    let mut out = Vec::with_capacity((size * size * 4) as usize);
+    for _ in 0..size * size {
+        out.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
