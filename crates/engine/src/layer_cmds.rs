@@ -38,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set fill projection",
             [],
             None,
-            "{layer? | effect?: content fill effect id, projection?: uv|triplanar|planar|spherical|cylindrical (default: the current one), scale?: number | [u, v] (uv), rotation?: degrees (uv), offset?: [u, v] (uv) | [x, y, z] (triplanar, planar), fit?: stretch|contain|cover (uv image), sharpness?: 1..64 (triplanar), axis?: 0|1|2 (planar, cylindrical)} — what is not given keeps its value",
+            "{layer? | effect?: content fill effect id, projection?: uv|triplanar|planar|spherical|cylindrical (default: the current one), scale?: number | [u, v] (uv), rotation?: degrees (uv), offset?: [u, v] (uv) | [x, y, z] (triplanar, planar), fit?: fill|stretch|contain|cover (uv image), sharpness?: 1..64 (triplanar), axis?: 0|1|2 (planar, cylindrical)} — what is not given keeps its value",
             has_layer,
             fill_projection
         ),
@@ -396,7 +396,7 @@ fn fill_set(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn projection_from(p: &Value, cmd: &str, current: Option<&Projection>) -> Result<Projection> {
     let fit = match strp(p, "fit") {
         None => None,
-        Some("stretch") => Some(ImageFit::Stretch),
+        Some("stretch" | "fill") => Some(ImageFit::Stretch),
         Some("contain" | "fit") => Some(ImageFit::Contain),
         Some("cover") => Some(ImageFit::Cover),
         Some(other) => return Err(bad(cmd, format!("unknown image fit `{other}`"))),

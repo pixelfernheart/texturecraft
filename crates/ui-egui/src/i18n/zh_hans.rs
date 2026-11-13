@@ -649,6 +649,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Stretch", "拉伸"),
     ("Fit / contain", "适应 / 包含"),
     ("Cover / crop", "覆盖 / 裁剪"),
+    ("Lock / crop", "锁定 / 裁剪"),
     ("Drag an edge handle to resize one side", "拖动边缘手柄可单独调整一侧大小"),
     ("Scale / tiling", "缩放 / 平铺"),
     ("Scatter color", "散射颜色"),

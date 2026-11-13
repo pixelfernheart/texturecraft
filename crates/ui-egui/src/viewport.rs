@@ -610,7 +610,6 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         && !picking_id_color
         && touch.is_none()
         && decal_input(app, ui, &response, rect);
-
     // Painting
     let painting = app.ui.mode == crate::state::Mode::Painting
         && !popup
@@ -622,7 +621,8 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         && placing.is_none()
         && !picking_id_color
         && touch.is_none()
-        && !decal_drag;
+        && !decal_drag
+        && !crate::decal_drop::DecalDrop::blocks_input(ui.ctx());
     let path_tool = app.session.tool.tool == Tool::Path;
     let viewport = app.session.viewport;
     let show = |app: &TextureCraftApp, point: Vec3| project(app, rect, point);
@@ -679,6 +679,7 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         camera: app.session.camera,
         shade: Shade { highlight: drop_highlight(app, ui, &response), ..shade(app) },
         visible: app.session.doc.project.texture_sets.iter().map(|texture_set| texture_set.visible).collect(),
+        overlay: crate::symmetry::scene_overlay(app, ui, rect),
     };
     add_callback(app, ui, rect, frame, sync);
     polygon_fill_box_overlay(ui, rect, fill_box);
@@ -687,16 +688,19 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
     crate::shelf::drop_target(app, ui, &response, crate::shelf::DropZone::View3d);
 
     // Brush cursor; while a Ctrl+drag changes the brush it stays where the drag began
+    let mut symmetry_cursor = None;
     if app.ui.mode == crate::state::Mode::Painting
         && !navigating
         && response.hovered()
         && brush_tool(app.session.tool.tool)
+        && (app.session.tool.tool != Tool::Path || adjusting)
         && app.picking_id_color.is_none()
         && let Some(hover_pos) = if adjusting { ui.input(|input| input.pointer.press_origin()) } else { response.hover_pos() }
         && let Some(hit) = app.session.pick(local(hover_pos), app.session.viewport)
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::None);
         brush_cursor(app, ui, rect, hit.pos, hit.nrm);
+        symmetry_cursor = Some((hit.pos, hit.nrm));
         if app.session.tool.tool == Tool::Clone
             && let Some(source) = app.session.clone_source_point(Some(hit.uv))
         {
@@ -715,6 +719,7 @@ fn view_3d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
     if app.ui.mode == crate::state::Mode::Painting && path_tool {
         path_overlay(app, ui, rect, &response, false, show);
     }
+    crate::symmetry::overlay(app, ui, rect, symmetry_cursor);
     stencil_overlay(app, ui, rect);
     decal_overlay(app, ui, rect);
     brush_readout(app, ui, &response, adjusting);
@@ -741,7 +746,12 @@ const QUICK_MASK_NOTICE_COLOR: Color32 = Color32::from_rgb(0xe8, 0x6a, 0x6a);
 
 /// What bake mode's 3D view draws besides the low poly (nothing in the other modes)
 fn bake_visualization(app: &TextureCraftApp) -> Option<texturecraft_render::BakeVisualization> {
-    (app.ui.mode == crate::state::Mode::Baking).then(|| app.ui.bake_visualization.visualization(app.session.ts())).flatten()
+    // Setup meshes can cover the low-poly map preview; keep the switches for when setup resumes.
+    if app.ui.mode != crate::state::Mode::Baking || app.bake.is_some() {
+        return None;
+    }
+
+    app.ui.bake_visualization.visualization(app.session.ts())
 }
 
 /// What a drag on the selected decal's frame does.
@@ -751,10 +761,10 @@ enum DecalGrab {
     Move,
     /// A corner: scale it about its center.
     Scale,
-    /// A left or right edge: resize the width.
-    ScaleWidth,
-    /// A top or bottom edge: resize the height.
-    ScaleHeight,
+    /// A left or right edge: resize it while keeping the opposite edge fixed.
+    ScaleWidth(i8),
+    /// A top or bottom edge: resize it while keeping the opposite edge fixed.
+    ScaleHeight(i8),
     /// The round handle above its top edge: turn it.
     Rotate,
 }
@@ -764,8 +774,8 @@ impl DecalGrab {
         match self {
             DecalGrab::Move => egui::CursorIcon::Move,
             DecalGrab::Scale => egui::CursorIcon::ResizeNwSe,
-            DecalGrab::ScaleWidth => egui::CursorIcon::ResizeHorizontal,
-            DecalGrab::ScaleHeight => egui::CursorIcon::ResizeVertical,
+            DecalGrab::ScaleWidth(_) => egui::CursorIcon::ResizeHorizontal,
+            DecalGrab::ScaleHeight(_) => egui::CursorIcon::ResizeVertical,
             DecalGrab::Rotate if dragging => egui::CursorIcon::Grabbing,
             DecalGrab::Rotate => egui::CursorIcon::Grab,
         }
@@ -787,6 +797,46 @@ struct DecalDrag {
 
 fn decal_drag_id() -> egui::Id {
     egui::Id::unique("tc_decal_drag")
+}
+
+const DECAL_ROTATION_ZERO_OFFSET_DEGREES: f32 = 0.785;
+
+pub(crate) fn decal_rotation_for_displayed_degrees(degrees: f32) -> f32 {
+    (degrees + DECAL_ROTATION_ZERO_OFFSET_DEGREES).rem_euclid(360.0)
+}
+
+pub(crate) fn decal_displayed_degrees(rotation: f32) -> f32 {
+    (rotation - DECAL_ROTATION_ZERO_OFFSET_DEGREES).rem_euclid(360.0)
+}
+
+/// Resize one decal edge while keeping its opposite edge in place.
+fn resize_decal_edge(
+    mut decal: texturecraft_engine::core::Decal,
+    grab: DecalGrab,
+    from: Pos2,
+    center: Pos2,
+    pointer: Pos2,
+) -> Option<texturecraft_engine::core::Decal> {
+    let (axis, side) = match grab {
+        DecalGrab::ScaleWidth(side) => (0, side as f32),
+        DecalGrab::ScaleHeight(side) => (1, side as f32),
+        _ => return None,
+    };
+    let direction = (from - center).normalized();
+    let distance = (from - center).length().max(1.0);
+    let factor = ((pointer - center).dot(direction) / distance).clamp(0.01, 100.0);
+    let previous_size = decal.size[axis];
+    decal.size[axis] = (previous_size * factor).max(1e-4);
+    let half_delta = side * (decal.size[axis] - previous_size) * 0.5;
+    let (sin, cos) = decal.rotation.to_radians().sin_cos();
+    if axis == 0 {
+        decal.offset[0] += half_delta * cos;
+        decal.offset[1] += half_delta * sin;
+    } else {
+        decal.offset[0] -= half_delta * sin;
+        decal.offset[1] += half_delta * cos;
+    }
+    Some(decal)
 }
 
 /// Screen distance from the top edge to the rotation handle (points).
@@ -834,7 +884,12 @@ impl DecalFrame {
         }
         for (i, mid) in self.edge_mids.iter().enumerate() {
             if mid.distance(p) <= HANDLE_GRAB {
-                return Some(if i == 1 || i == 3 { DecalGrab::ScaleWidth } else { DecalGrab::ScaleHeight });
+                return Some(match i {
+                    0 => DecalGrab::ScaleHeight(1),
+                    1 => DecalGrab::ScaleWidth(1),
+                    2 => DecalGrab::ScaleHeight(-1),
+                    _ => DecalGrab::ScaleWidth(-1),
+                });
             }
         }
         // Inside the (convex) frame: on the same side of every edge.
@@ -880,14 +935,9 @@ fn decal_input(app: &mut TextureCraftApp, ui: &Ui, resp: &egui::Response, rect: 
                 let k = (p - d.center).length() / (d.from - d.center).length().max(1.0);
                 json!({"size": [d.start.size[0] * k, d.start.size[1] * k]})
             }
-            DecalGrab::ScaleWidth | DecalGrab::ScaleHeight => {
-                let direction = (d.from - d.center).normalized();
-                let start_distance = (d.from - d.center).length().max(1.0);
-                let k = ((p - d.center).dot(direction) / start_distance).clamp(0.01, 100.0);
-                let mut size = d.start.size;
-                let axis = if d.grab == DecalGrab::ScaleWidth { 0 } else { 1 };
-                size[axis] = (size[axis] * k).max(1e-4);
-                json!({"size": size})
+            DecalGrab::ScaleWidth(_) | DecalGrab::ScaleHeight(_) => {
+                let Some(resized) = resize_decal_edge(d.start, d.grab, d.from, d.center, p) else { return true };
+                json!({"size": resized.size, "offset": resized.offset})
             }
             DecalGrab::Rotate => {
                 // Screen y points down: counter-clockwise angles turn the decal's right toward its up.
@@ -1201,7 +1251,12 @@ fn decal_overlay(app: &mut TextureCraftApp, ui: &Ui, rect: Rect) {
     painter.line_segment([f.top, f.knob], Stroke::new(1.4, Color32::from_white_alpha(220)));
     painter.circle(f.knob, 5.0, fill(DecalGrab::Rotate), edge);
     for (i, mid) in f.edge_mids.iter().enumerate() {
-        let grab = if i == 1 || i == 3 { DecalGrab::ScaleWidth } else { DecalGrab::ScaleHeight };
+        let grab = match i {
+            0 => DecalGrab::ScaleHeight(1),
+            1 => DecalGrab::ScaleWidth(1),
+            2 => DecalGrab::ScaleHeight(-1),
+            _ => DecalGrab::ScaleWidth(-1),
+        };
         painter.circle(*mid, 4.0, fill(grab), edge);
     }
     for c in f.corners {
@@ -1528,7 +1583,7 @@ fn adjust_brush(brush: &mut texturecraft_engine::paint::BrushSettings, right: bo
     }
 }
 
-fn brush_cursor(app: &TextureCraftApp, ui: &Ui, rect: Rect, pos: Vec3, nrm: Vec3) {
+pub(crate) fn brush_cursor(app: &TextureCraftApp, ui: &Ui, rect: Rect, pos: Vec3, nrm: Vec3) {
     let (lo, hi) = app.session.mesh.bounds();
     let r = app.session.tool.brush.size * (hi - lo).length();
     let t = nrm.any_orthonormal_vector();
@@ -1702,6 +1757,7 @@ fn view_2d(app: &mut TextureCraftApp, ui: &mut Ui, rect: Rect, sync: &mut Pendin
         camera: app.session.camera,
         shade: shade(app),
         visible: app.session.doc.project.texture_sets.iter().map(|texture_set| texture_set.visible).collect(),
+        overlay: Vec::new(),
     };
     add_callback(app, ui, rect, frame, sync);
     polygon_fill_box_overlay(ui, rect, fill_box);
@@ -1887,6 +1943,22 @@ mod tests {
     }
 
     #[test]
+    fn active_bake_hides_setup_overlays_and_restores_their_preferences() {
+        let session = texturecraft_engine::sample_session(256, 64).unwrap();
+        let mut harness = egui_kittest::Harness::builder().build_eframe(|context| TextureCraftApp::new(context, session));
+        let app = harness.state_mut();
+        app.ui.mode = crate::state::Mode::Baking;
+        let before = bake_visualization(app).unwrap();
+        assert!(before.high_poly && before.cage);
+
+        app.bake = Some(crate::BakeJob { queue: Vec::new(), current: None, total: 0 });
+        assert!(bake_visualization(app).is_none(), "setup overlays must not obscure a running bake");
+        app.bake = None;
+
+        assert_eq!(bake_visualization(app), Some(before));
+    }
+
+    #[test]
     fn decal_edge_handles_resize_only_their_own_axis() {
         let frame = DecalFrame {
             layer: texturecraft_engine::core::LayerId(1),
@@ -1906,8 +1978,36 @@ mod tests {
             edge_mids: [pos2(50.0, 10.0), pos2(90.0, 50.0), pos2(50.0, 90.0), pos2(10.0, 50.0)],
             knob: pos2(50.0, -14.0),
         };
-        assert_eq!(frame.grab(pos2(90.0, 50.0)), Some(DecalGrab::ScaleWidth));
-        assert_eq!(frame.grab(pos2(50.0, 10.0)), Some(DecalGrab::ScaleHeight));
+        assert_eq!(frame.grab(pos2(90.0, 50.0)), Some(DecalGrab::ScaleWidth(1)));
+        assert_eq!(frame.grab(pos2(50.0, 10.0)), Some(DecalGrab::ScaleHeight(1)));
+    }
+
+    #[test]
+    fn decal_edge_resize_keeps_the_opposite_edge_fixed_even_when_rotated() {
+        let start = texturecraft_engine::core::Decal {
+            center: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+            up: [0.0, 1.0, 0.0],
+            size: [2.0, 1.0],
+            rotation: 37.0,
+            offset: [0.1, -0.2],
+            depth: 1.0,
+            fit: texturecraft_engine::core::ImageFit::Stretch,
+        };
+        let resized = resize_decal_edge(start, DecalGrab::ScaleWidth(1), pos2(100.0, 50.0), pos2(50.0, 50.0), pos2(125.0, 50.0)).unwrap();
+        let before = texturecraft_engine::compose::pattern::decal_corners(&start).unwrap();
+        let after = texturecraft_engine::compose::pattern::decal_corners(&resized).unwrap();
+        assert!((before[0] - after[0]).length() < 1e-5, "the top-left corner stays fixed");
+        assert!((before[3] - after[3]).length() < 1e-5, "the bottom-left corner stays fixed");
+        assert!(resized.size[0] > start.size[0]);
+    }
+
+    #[test]
+    fn decal_display_zero_uses_the_reported_straight_alignment() {
+        assert!((decal_displayed_degrees(0.785)).abs() < 1e-6);
+        assert!((decal_rotation_for_displayed_degrees(0.0) - 0.785).abs() < 1e-6);
+        let displayed = 42.5;
+        assert!((decal_displayed_degrees(decal_rotation_for_displayed_degrees(displayed)) - displayed).abs() < 1e-4);
     }
 
     #[test]

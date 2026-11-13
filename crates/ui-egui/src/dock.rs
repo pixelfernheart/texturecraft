@@ -1705,7 +1705,7 @@ fn fill_editor(app: &mut TextureCraftApp, ui: &mut Ui, fill: &Fill, base: &Value
         if fill.sources.values().any(|source| matches!(source, Source::Image { .. }))
             && let Projection::Uv { fit, .. } = &fill.projection
         {
-            image_fit_combo(ui, *fit, |fit| {
+            image_fit_combo(ui, *fit, tr("Cover / crop"), "cover", |fit| {
                 app.run("layer.fill.projection", with(base, json!({"fit": fit})));
             });
         }
@@ -1734,19 +1734,22 @@ fn fill_editor(app: &mut TextureCraftApp, ui: &mut Ui, fill: &Fill, base: &Value
     }
 }
 
-fn image_fit_combo(ui: &mut Ui, current: ImageFit, mut set: impl FnMut(&'static str)) {
+fn image_fit_combo(ui: &mut Ui, current: ImageFit, cover_label: &str, cover_id: &'static str, mut set: impl FnMut(&'static str)) {
+    let fill_label = format!("{} / {}", tr("Fill"), tr("Stretch"));
     let label = match current {
-        ImageFit::Stretch => "Stretch",
+        ImageFit::Stretch => fill_label.as_str(),
         ImageFit::Contain => "Fit / contain",
-        ImageFit::Cover => "Cover / crop",
+        ImageFit::Cover => cover_label,
     };
-    combo(ui, tr("Image fit"), tr(label), |ui| {
-        for (fit, name, id) in
-            [(ImageFit::Stretch, "Stretch", "stretch"), (ImageFit::Contain, "Fit / contain", "contain"), (ImageFit::Cover, "Cover / crop", "cover")]
-        {
-            if ui.selectable_label(current == fit, tr(name)).clicked() {
-                set(id);
-            }
+    combo(ui, tr("Image fit"), label.to_owned(), |ui| {
+        if ui.selectable_label(current == ImageFit::Stretch, &fill_label).clicked() {
+            set("stretch");
+        }
+        if ui.selectable_label(current == ImageFit::Contain, tr("Fit / contain")).clicked() {
+            set("contain");
+        }
+        if ui.selectable_label(current == ImageFit::Cover, cover_label).clicked() {
+            set(cover_id);
         }
     });
 }
@@ -1863,12 +1866,12 @@ fn decal_editor(app: &mut TextureCraftApp, ui: &mut Ui, d: &Decal, layer: LayerI
     if ui.selectable_label(placing, label).on_hover_text(tr("The next click in the 3D view moves the decal there")).clicked() {
         app.placing_decal = if placing { None } else { Some(layer) };
     }
-    image_fit_combo(ui, d.fit, |fit| {
+    image_fit_combo(ui, d.fit, tr("Lock / crop"), "lock", |fit| {
         app.run("layer.decal.set", json!({"layer": layer.0, "fit": fit}));
     });
     let (lo, hi) = app.session.mesh.bounds();
     let diag = (hi - lo).length().max(1e-3);
-    let mut v = [d.size[0], d.size[1], d.rotation, d.offset[0], d.offset[1], d.depth];
+    let mut v = [d.size[0], d.size[1], crate::viewport::decal_displayed_degrees(d.rotation), d.offset[0], d.offset[1], d.depth];
     let rows = [
         (tr("Width"), diag * 0.01..=diag * 2.0),
         (tr("Height"), diag * 0.01..=diag * 2.0),
@@ -1882,7 +1885,10 @@ fn decal_editor(app: &mut TextureCraftApp, ui: &mut Ui, d: &Decal, layer: LayerI
         edit = edit.or(slider_edit(ui, label, x, range, 3));
     }
     if let Some(merge) = edit {
-        app.run("layer.decal.set", json!({"layer": layer.0, "size": [v[0], v[1]], "rotation": v[2], "offset": [v[3], v[4]], "depth": v[5], "merge": merge}));
+        app.run(
+            "layer.decal.set",
+            json!({"layer": layer.0, "size": [v[0], v[1]], "rotation": crate::viewport::decal_rotation_for_displayed_degrees(v[2]), "offset": [v[3], v[4]], "depth": v[5], "merge": merge}),
+        );
     }
     ui.label(
         RichText::new(tr("The image's alpha cuts the decal's shape; faces turned away and surfaces beyond its depth stay clear."))

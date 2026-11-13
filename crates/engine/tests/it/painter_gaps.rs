@@ -195,11 +195,14 @@ fn decals_project_an_image_from_a_frame_placed_on_the_surface() {
     assert!(red(at(&mut s, Channel::BaseColor, 170.0, 180.0)));
     let r = execute(&mut s, "layer.decal.set", &json!({"fit": "stretch"})).unwrap();
     assert_eq!(r["decal"]["fit"], "stretch");
+    let r = execute(&mut s, "layer.decal.set", &json!({"fit": "lock"})).unwrap();
+    assert_eq!(r["decal"]["fit"], "cover", "Lock preserves image proportions and clips at the decal frame");
     let inspect = execute(&mut s, "project.inspect", &Value::Null).unwrap().to_string();
     assert!(inspect.contains("Decal projection") && inspect.contains("\"rotation\":45"), "inspect shows the decal");
     // Not a decal; one undo step per edit.
     let plain = id(execute(&mut s, "layer.add.fill", &Value::Null).unwrap(), "layer");
     assert!(execute(&mut s, "layer.decal.set", &json!({"layer": plain.0, "size": 1})).is_err());
+    execute(&mut s, "edit.undo", &Value::Null).unwrap();
     execute(&mut s, "edit.undo", &Value::Null).unwrap();
     execute(&mut s, "edit.undo", &Value::Null).unwrap();
     execute(&mut s, "edit.undo", &Value::Null).unwrap();
@@ -442,6 +445,8 @@ fn fill_projection_edits_keep_what_they_do_not_change() {
     );
     set(&mut s, json!({"fit": "cover"})).unwrap();
     assert!(matches!(proj(&s), Projection::Uv { fit: texturecraft_engine::core::ImageFit::Cover, .. }));
+    set(&mut s, json!({"fit": "fill"})).unwrap();
+    assert!(matches!(proj(&s), Projection::Uv { fit: texturecraft_engine::core::ImageFit::Stretch, .. }));
     assert!(set(&mut s, json!({"fit": "not-a-fit"})).is_err());
     set(&mut s, json!({"projection": "triplanar", "offset": [1, 2, 3]})).unwrap();
     assert!(set(&mut s, json!({"fit": "contain"})).is_err());

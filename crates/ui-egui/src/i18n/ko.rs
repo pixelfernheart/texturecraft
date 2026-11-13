@@ -688,6 +688,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Stretch", "늘이기"),
     ("Fit / contain", "맞춤 / 포함"),
     ("Cover / crop", "채우기 / 자르기"),
+    ("Lock / crop", "잠금 / 자르기"),
     ("Drag an edge handle to resize one side", "모서리 핸들을 끌어 한쪽만 크기 조절"),
     ("Scale / tiling", "스케일 / 타일링"),
     ("Scatter color", "산란 색상"),

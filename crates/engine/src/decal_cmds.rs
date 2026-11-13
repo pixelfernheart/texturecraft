@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add decal",
             [],
             None,
-            "{image: resource name, x?, y?: viewport pixels (default: the view center), viewport?: [w,h] | position?: [x,y,z], normal?: [x,y,z], up?: [x,y,z] (the image's up; default the view's up, or the view direction when that is along the normal), size?: height | [w,h] (world units; default a quarter of the mesh), rotation?: degrees (default 0.785), fit?: stretch|contain|cover (default cover), depth?, name?} — a fill layer projecting the image from a frame placed on the surface; seen from the front, the image reads the right way round",
+            "{image: resource name, x?, y?: viewport pixels (default: the view center), viewport?: [w,h] | position?: [x,y,z], normal?: [x,y,z], up?: [x,y,z] (the image's up; default the view's up, or the view direction when that is along the normal), size?: height | [w,h] (world units; default a quarter of the mesh), rotation?: degrees (default 0.785), fit?: stretch|contain|cover|lock (default cover), depth?, name?} — a fill layer projecting the image from a frame placed on the surface; seen from the front, the image reads the right way round",
             always,
             add
         ),
@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit decal",
             [],
             None,
-            "{layer?, x?, y?, viewport? | position?, normal? (re-place it), up?: [x,y,z], size?: height | [w,h], rotation?: degrees, fit?: stretch|contain|cover, offset?: [right, up] (world units from where it was placed), depth?, image?, merge?: true continues the previous Edit decal undo step (drags)}",
+            "{layer?, x?, y?, viewport? | position?, normal? (re-place it), up?: [x,y,z], size?: height | [w,h], rotation?: degrees, fit?: stretch|contain|cover|lock, offset?: [right, up] (world units from where it was placed), depth?, image?, merge?: true continues the previous Edit decal undo step (drags)}",
             has_layer,
             set
         ),
@@ -128,9 +128,9 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
 fn image_fit(p: &Value, cmd: &str, default: ImageFit) -> Result<ImageFit> {
     match strp(p, "fit") {
         None => Ok(default),
-        Some("stretch") => Ok(ImageFit::Stretch),
+        Some("stretch" | "fill") => Ok(ImageFit::Stretch),
         Some("contain" | "fit") => Ok(ImageFit::Contain),
-        Some("cover") => Ok(ImageFit::Cover),
+        Some("cover" | "lock") => Ok(ImageFit::Cover),
         Some(other) => Err(bad(cmd, format!("unknown image fit `{other}`"))),
     }
 }

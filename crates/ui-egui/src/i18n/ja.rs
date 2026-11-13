@@ -697,6 +697,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Stretch", "引き伸ばす"),
     ("Fit / contain", "フィット / 全体表示"),
     ("Cover / crop", "カバー / トリミング"),
+    ("Lock / crop", "ロック / トリミング"),
     ("Drag an edge handle to resize one side", "辺のハンドルをドラッグして片側だけをサイズ変更"),
     ("Scale / tiling", "スケール / タイリング"),
     ("Scatter color", "スキャタリングカラー"),

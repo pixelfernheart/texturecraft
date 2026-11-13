@@ -724,6 +724,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Stretch", "Étirer"),
     ("Fit / contain", "Ajuster / contenir"),
     ("Cover / crop", "Couvrir / recadrer"),
+    ("Lock / crop", "Verrouiller / recadrer"),
     ("Drag an edge handle to resize one side", "Faites glisser une poignée de bord pour redimensionner un seul côté"),
     ("Scale / tiling", "Échelle / répétition"),
     ("Scatter color", "Couleur de diffusion"),
